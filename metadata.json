@@ -1,0 +1,6 @@
+{
+  "name": "CHUNKS Offline Live Room Backend Console",
+  "description": "An interactive workspace, console, and simulator to configure, seed, and test the Supabase schema, real-time live rooms, and learners for CHUNKS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
