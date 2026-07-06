@@ -6,10 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import { Course, Lesson, LessonSection, SentenceResource, CCIStandardCard, CVRUnit, PracticeRoom, RoomRound, Learner, RoomMembership, LearnerResponse } from '../types';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
+import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
+import { generateResourceAudio } from '../lib/ttsService';
 import { 
   Plus, Play, Check, AlertTriangle, Users, BookOpen, Clock, Activity, 
   Award, RefreshCw, LogIn, UserCheck, Send, Volume2, Sparkles, AlertCircle, Trash2, Shield,
-  Settings, Languages, VolumeX, ChevronDown, ChevronUp
+  Settings, Languages, ChevronDown, ChevronUp, Maximize2, Minimize2, Bell, Lock
 } from 'lucide-react';
 
 interface SimulatorTabProps {
@@ -21,6 +23,7 @@ interface SimulatorTabProps {
   cciCards: CCIStandardCard[];
   cvrUnits: CVRUnit[];
   rooms: PracticeRoom[];
+  learners: Learner[];
   onRefreshData: () => void;
 }
 
@@ -33,6 +36,7 @@ export default function SimulatorTab({
   cciCards,
   cvrUnits,
   rooms,
+  learners,
   onRefreshData
 }: SimulatorTabProps) {
   // Simulator Navigation: Room state (either setup or running)
@@ -56,6 +60,10 @@ export default function SimulatorTab({
   const [learnerRoomCode, setLearnerRoomCode] = useState('');
   const [currentLearnerId, setCurrentLearnerId] = useState<string>('');
   const [currentLearnerName, setCurrentLearnerName] = useState<string>('');
+  const [audioPrepMode, setAudioPrepMode] = useState<'create' | 'start' | null>(null);
+  const [audioPrepResources, setAudioPrepResources] = useState<SentenceResource[]>([]);
+  const [audioPrepBusy, setAudioPrepBusy] = useState(false);
+  const [audioPrepStatus, setAudioPrepStatus] = useState('');
 
   // Sync setup states when async props load
   useEffect(() => {
@@ -122,12 +130,15 @@ export default function SimulatorTab({
   const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(true);
   const [showAudioSettings, setShowAudioSettings] = useState<boolean>(false);
   const [isCopied, setIsCopied] = useState<boolean>(false);
+  const [isFocusMode, setIsFocusMode] = useState<boolean>(false);
+  const [teacherToast, setTeacherToast] = useState<string>('');
 
   // Auto-Advance States
-  const [autoAdvance, setAutoAdvance] = useState<boolean>(false);
+  const [autoAdvance] = useState<boolean>(true);
   const [autoAdvanceCountdown, setAutoAdvanceCountdown] = useState<number | null>(null);
   const [lastPlayedRoundId, setLastPlayedRoundId] = useState<string>('');
   const [lastAutoAdvancedRoundId, setLastAutoAdvancedRoundId] = useState<string>('');
+  const [lastNotifiedResponseId, setLastNotifiedResponseId] = useState<string>('');
 
   // Customizable Speech engine helper
   const speakText = (text: string, langCode: 'en' | 'vi') => {
@@ -152,13 +163,21 @@ export default function SimulatorTab({
   };
 
   // Main playback engine with auto-fallback to speech synthesis
-  const playSentenceAudio = (res: SentenceResource) => {
+  const playSentenceAudio = async (res: SentenceResource) => {
     const textToPlay = audioLang === 'en' ? res.text_en : res.text_vi;
     const audioUrl = audioLang === 'en' ? res.audio_en_url : res.audio_vi_url;
 
     if (audioUrl) {
+      const playableUrl = resolveResourceAudioUrl(audioUrl);
+      const exists = await checkResourceAudioExists(audioUrl);
+
+      if (!playableUrl || playableUrl.startsWith('speech-synth:') || exists === false) {
+        speakText(textToPlay || res.text_prompt, audioLang);
+        return;
+      }
+
       setIsAudioPlaying(true);
-      const audio = new Audio(audioUrl);
+      const audio = new Audio(playableUrl);
       audio.volume = audioVolume;
       audio.play()
         .then(() => {
@@ -183,7 +202,9 @@ export default function SimulatorTab({
   const [activeRoom, setActiveRoom] = useState<PracticeRoom | null>(null);
   const [activeRoster, setActiveRoster] = useState<(RoomMembership & { learner: Learner })[]>([]);
   const [activeRound, setActiveRound] = useState<RoomRound | null>(null);
+  const [roomRounds, setRoomRounds] = useState<RoomRound[]>([]);
   const [roundResponses, setRoundResponses] = useState<(LearnerResponse & { learner: Learner })[]>([]);
+  const [roomResponseHistory, setRoomResponseHistory] = useState<(LearnerResponse & { learner: Learner })[]>([]);
   const [availableSentenceIds, setAvailableSentenceIds] = useState<string[]>([]);
   
   // Setup dependent selections
@@ -191,63 +212,202 @@ export default function SimulatorTab({
   const selectedLessonId = setupLessonId || filteredLessons[0]?.id || '';
   const filteredSections = sections.filter(s => s.lesson_id === selectedLessonId);
 
-  // Load active room and sync state periodically or on change
+  const getMissingAudioResources = (items: SentenceResource[]) => {
+    return items.filter(r => !r.audio_en_url || !r.audio_vi_url);
+  };
+
+  const formatMissingAudioSummary = (items: SentenceResource[]) => {
+    return items.slice(0, 8).map(r => `${r.sentence_code}: ${!r.audio_en_url ? 'missing EN' : ''}${!r.audio_en_url && !r.audio_vi_url ? ', ' : ''}${!r.audio_vi_url ? 'missing VI' : ''}`).join('\n');
+  };
+
+  const getApprovedResourcesInScope = () => {
+    const isApproved = (r: SentenceResource) => (r.approval_status || '').toLowerCase() === 'approved';
+    const isAllSectionsSelected = setupSectionIds.length === 0 || filteredSections.every(s => setupSectionIds.includes(s.id));
+    const inSelectedSections = (r: SentenceResource) => isAllSectionsSelected || (r.section_id && setupSectionIds.includes(r.section_id));
+
+    const exact = resources.filter(r =>
+      r.course_id === setupCourseId &&
+      r.lesson_id === selectedLessonId &&
+      isApproved(r) &&
+      inSelectedSections(r)
+    );
+    if (exact.length > 0) return exact;
+
+    // Fallback for imported rows where course_id drifted but lesson_id/section_id is correct.
+    return resources.filter(r =>
+      r.lesson_id === selectedLessonId &&
+      isApproved(r) &&
+      inSelectedSections(r)
+    );
+  };
+
+  // Load active room and subscribe to Supabase Realtime WebSocket changes.
   useEffect(() => {
     syncActiveRoomState();
-    
-    // Subscribe to sandbox change events for real-time reactivity
-    const handleDbChange = () => {
-      syncActiveRoomState();
-    };
-    window.addEventListener('chunks_sandbox_db_change', handleDbChange);
-    return () => {
-      window.removeEventListener('chunks_sandbox_db_change', handleDbChange);
-    };
-  }, [activeRoomId]);
 
-  const syncActiveRoomState = () => {
+    if (!activeRoomId) return;
+
+    if (useSandbox) {
+      const handleDbChange = () => syncActiveRoomState();
+      window.addEventListener('chunks_sandbox_db_change', handleDbChange);
+      return () => window.removeEventListener('chunks_sandbox_db_change', handleDbChange);
+    }
+
+    const channel = supabase
+      .channel(`live-room-${activeRoomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'practice_rooms', filter: `id=eq.${activeRoomId}` }, () => syncActiveRoomState())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_memberships', filter: `room_id=eq.${activeRoomId}` }, () => syncActiveRoomState())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_rounds', filter: `room_id=eq.${activeRoomId}` }, () => syncActiveRoomState())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'learner_responses' }, () => syncActiveRoomState())
+      .subscribe();
+
+    const fallbackPoll = window.setInterval(() => syncActiveRoomState(), 5000);
+
+    return () => {
+      window.clearInterval(fallbackPoll);
+      supabase.removeChannel(channel);
+    };
+  }, [activeRoomId, useSandbox, learners.length]);
+
+  const syncActiveRoomState = async () => {
     if (!activeRoomId) {
       setActiveRoom(null);
       setActiveRoster([]);
       setActiveRound(null);
+      setRoomRounds([]);
       setRoundResponses([]);
+      setRoomResponseHistory([]);
       return;
     }
 
-    const room = sandboxDb.rooms.find(r => r.id === activeRoomId) || null;
-    setActiveRoom(room);
+    if (useSandbox) {
+      const room = sandboxDb.rooms.find(r => r.id === activeRoomId) || null;
+      setActiveRoom(room);
 
-    if (room) {
-      // Load memberships
-      const memberships = sandboxDb.memberships.filter(m => m.room_id === room.id);
-      const rosterList = memberships.map(m => {
-        const learner = sandboxDb.learners.find(l => l.id === m.learner_id);
-        return { ...m, learner: learner! };
-      }).filter(item => item.learner !== undefined);
-      setActiveRoster(rosterList);
+      if (room) {
+        const memberships = sandboxDb.memberships.filter(m => m.room_id === room.id);
+        const rosterList = memberships.map(m => {
+          const learner = sandboxDb.learners.find(l => l.id === m.learner_id);
+          return { ...m, learner: learner! };
+        }).filter(item => item.learner !== undefined);
+        setActiveRoster(rosterList);
 
-      // Load active round
-      const rounds = sandboxDb.rounds.filter(rd => rd.room_id === room.id);
+        const rounds = sandboxDb.rounds.filter(rd => rd.room_id === room.id);
+        setRoomRounds(rounds);
+        const openRound = rounds.find(rd => rd.status === 'open') || rounds[rounds.length - 1] || null;
+        setActiveRound(openRound);
+
+        const roundIds = rounds.map(rd => rd.id);
+        const history = sandboxDb.responses
+          .filter(res => roundIds.includes(res.round_id))
+          .map(r => ({ ...r, learner: sandboxDb.learners.find(l => l.id === r.learner_id)! }))
+          .filter(item => item.learner);
+        setRoomResponseHistory(history);
+
+        if (openRound) {
+          if (openRound.status === 'open' && roundStartTime === 0) setRoundStartTime(Date.now());
+          setRoundResponses(history.filter(res => res.round_id === openRound.id));
+        } else {
+          setRoundStartTime(0);
+          setRoundResponses([]);
+        }
+
+        setAvailableSentenceIds(room.snapshot_sentence_resource_ids);
+      }
+      return;
+    }
+
+    try {
+      const { data: room, error: roomErr } = await supabase
+        .from('practice_rooms')
+        .select('*')
+        .eq('id', activeRoomId)
+        .maybeSingle();
+      if (roomErr) throw roomErr;
+      setActiveRoom((room || null) as PracticeRoom | null);
+
+      if (!room) {
+        setActiveRoster([]);
+        setActiveRound(null);
+        setRoomRounds([]);
+        setRoundResponses([]);
+        setRoomResponseHistory([]);
+        setAvailableSentenceIds([]);
+        return;
+      }
+
+      const [{ data: memberships, error: memErr }, { data: roomRounds, error: roundsErr }] = await Promise.all([
+        supabase.from('room_memberships').select('*').eq('room_id', room.id),
+        supabase.from('room_rounds').select('*').eq('room_id', room.id).order('round_index', { ascending: true })
+      ]);
+      if (memErr) throw memErr;
+      if (roundsErr) throw roundsErr;
+
+      const membershipRows = (memberships || []) as RoomMembership[];
+      const learnerIds = [...new Set(membershipRows.map(m => m.learner_id).filter(Boolean))];
+      let liveLearners: Learner[] = [];
+      if (learnerIds.length > 0) {
+        const { data: rosterLearners, error: rosterLearnerErr } = await supabase
+          .from('learners')
+          .select('*')
+          .in('id', learnerIds);
+        if (rosterLearnerErr) throw rosterLearnerErr;
+        liveLearners = (rosterLearners || []) as Learner[];
+      }
+
+      const rosterList = membershipRows.map(m => {
+        const learner = liveLearners.find(l => l.id === m.learner_id) || learners.find(l => l.id === m.learner_id) || {
+          id: m.learner_id,
+          display_name: `Learner ${m.learner_id.slice(0, 6)}`,
+          auth_user_id: null,
+          source: 'anonymous' as const,
+          last_seen_at: null,
+          created_at: m.joined_at,
+          updated_at: m.updated_at
+        };
+        return { ...m, learner };
+      });
+      setActiveRoster(rosterList as (RoomMembership & { learner: Learner })[]);
+
+      const rounds = (roomRounds || []) as RoomRound[];
+      setRoomRounds(rounds);
       const openRound = rounds.find(rd => rd.status === 'open') || rounds[rounds.length - 1] || null;
       setActiveRound(openRound);
 
+      const roundIds = rounds.map(r => r.id);
+      let mappedHistory: (LearnerResponse & { learner: Learner })[] = [];
+      if (roundIds.length > 0) {
+        const { data: allResps, error: allResErr } = await supabase
+          .from('learner_responses')
+          .select('*')
+          .in('round_id', roundIds);
+        if (allResErr) throw allResErr;
+        mappedHistory = ((allResps || []) as LearnerResponse[]).map(r => ({
+          ...r,
+          learner: liveLearners.find(l => l.id === r.learner_id) || learners.find(l => l.id === r.learner_id) || {
+            id: r.learner_id,
+            display_name: `Learner ${r.learner_id.slice(0, 6)}`,
+            auth_user_id: null,
+            source: 'anonymous' as const,
+            last_seen_at: null,
+            created_at: r.submitted_at,
+            updated_at: r.updated_at
+          }
+        }));
+      }
+      setRoomResponseHistory(mappedHistory);
+
       if (openRound) {
-        if (openRound.status === 'open' && roundStartTime === 0) {
-          setRoundStartTime(Date.now());
-        }
-        // Load responses
-        const resps = sandboxDb.responses.filter(res => res.round_id === openRound.id);
-        const mappedResps = resps.map(r => {
-          const learner = sandboxDb.learners.find(l => l.id === r.learner_id);
-          return { ...r, learner: learner! };
-        }).filter(item => item.learner !== undefined);
-        setRoundResponses(mappedResps);
+        if (openRound.status === 'open' && roundStartTime === 0) setRoundStartTime(Date.now());
+        setRoundResponses(mappedHistory.filter(r => r.round_id === openRound.id));
       } else {
         setRoundStartTime(0);
         setRoundResponses([]);
       }
 
-      setAvailableSentenceIds(room.snapshot_sentence_resource_ids);
+      setAvailableSentenceIds((room.snapshot_sentence_resource_ids || []) as string[]);
+    } catch (err: any) {
+      console.error('Failed to sync live room state:', err);
     }
   };
 
@@ -267,6 +427,17 @@ export default function SimulatorTab({
     }
   }, [activeRound?.id, autoPlayAudio, resources, lastPlayedRoundId]);
 
+  // Teacher quick notification when first response is captured and other learners lock out.
+  useEffect(() => {
+    if (!activeRound || roundResponses.length === 0) return;
+    const firstResponse = roundResponses[0];
+    if (!firstResponse || firstResponse.id === lastNotifiedResponseId) return;
+    setLastNotifiedResponseId(firstResponse.id);
+    setTeacherToast(`Captured ${firstResponse.learner.display_name}'s first response. Learner pads are locked for this round.`);
+    const timer = window.setTimeout(() => setTeacherToast(''), 4500);
+    return () => window.clearTimeout(timer);
+  }, [activeRound?.id, roundResponses, lastNotifiedResponseId]);
+
   // Auto-Advance logic when a student response is submitted
   useEffect(() => {
     if (
@@ -276,7 +447,7 @@ export default function SimulatorTab({
       roundResponses.length > 0 && 
       activeRound.id !== lastAutoAdvancedRoundId
     ) {
-      setAutoAdvanceCountdown(3); // start 3s countdown
+      setAutoAdvanceCountdown(0); // default: move to the next turn immediately after capture
     } else {
       setAutoAdvanceCountdown(null);
     }
@@ -315,6 +486,98 @@ export default function SimulatorTab({
     }
   }, [autoAdvanceCountdown]);
 
+  const createLiveRoom = async (approvedResources: SentenceResource[]) => {
+    const card = cciCards.find(c => c.id === setupCciCardId);
+    if (!card) {
+      throw new Error("Invalid or inactive CCI Card selected.");
+    }
+
+    const code = "CH-" + Math.floor(1000 + Math.random() * 9000);
+    const roomId = crypto.randomUUID();
+
+    const newRoom = {
+      id: roomId,
+      room_code: code,
+      title: roomTitle,
+      status: 'lobby',
+      current_round_id: null,
+      course_id: setupCourseId,
+      lesson_id: selectedLessonId,
+      host_name: hostName,
+      resource_scope_filter: { sectionIds: setupSectionIds },
+      snapshot_sentence_resource_ids: approvedResources.map(r => r.id),
+      scope_refreshed_at: new Date().toISOString(),
+      scoring_mode: setupScoringMode,
+      default_response_capture_mode: setupCaptureMode,
+      teacher_pin_hash: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase
+      .from('practice_rooms')
+      .insert([newRoom]);
+
+    if (error) throw error;
+    setActiveRoomId(roomId);
+    setLearnerRoomCode(code);
+    onRefreshData();
+    setTeacherToast('Live classroom launched. Start Session is ready.');
+  };
+
+  const prepareMissingAudioAndContinue = async () => {
+    if (!audioPrepMode || audioPrepResources.length === 0) return;
+    const missingAudio = getMissingAudioResources(audioPrepResources);
+    const targets: Array<{ resource: SentenceResource; lang: 'en' | 'vi' }> = [];
+    missingAudio.forEach(resource => {
+      if (!resource.audio_en_url) targets.push({ resource, lang: 'en' });
+      if (!resource.audio_vi_url) targets.push({ resource, lang: 'vi' });
+    });
+
+    if (targets.length === 0) {
+      setAudioPrepStatus('Audio is already complete. Continuing...');
+    }
+
+    setAudioPrepBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    try {
+      for (const target of targets) {
+        setAudioPrepStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${target.resource.sentence_code}`);
+        try {
+          await generateResourceAudio(target.resource, target.lang);
+          ok += 1;
+        } catch (err: any) {
+          failures.push(`${target.resource.sentence_code} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
+        }
+      }
+
+      if (failures.length > 0) {
+        setAudioPrepStatus(`Prepared ${ok}/${targets.length}. ${failures.length} failed. Fix failed tracks before starting.`);
+        alert('Some audio tracks failed:\n' + failures.slice(0, 8).join('\n'));
+        return;
+      }
+
+      setAudioPrepStatus('Audio prepared. Continuing live classroom...');
+      const mode = audioPrepMode;
+      const resourcesToUse = audioPrepResources;
+      setAudioPrepMode(null);
+      setAudioPrepResources([]);
+      setAudioPrepStatus('');
+      await onRefreshData();
+
+      if (mode === 'create') {
+        await createLiveRoom(resourcesToUse);
+      } else if (mode === 'start') {
+        const usedIds = new Set(roomRounds.map(r => r.sentence_resource_id));
+        const nextSentenceId = availableSentenceIds.find(id => !usedIds.has(id));
+        if (nextSentenceId) handleOpenRound(nextSentenceId);
+      }
+    } finally {
+      setAudioPrepBusy(false);
+    }
+  };
+
   // 1. Create Room Trigger
   const handleCreateRoomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -339,53 +602,21 @@ export default function SimulatorTab({
     } else {
       const executeCreate = async () => {
         try {
-          const isAllSectionsSelected = setupSectionIds.length === 0 || filteredSections.every(s => setupSectionIds.includes(s.id));
-          const approvedResources = resources.filter(
-            r => r.course_id === setupCourseId &&
-                 r.lesson_id === selectedLessonId &&
-                 r.approval_status === 'approved' &&
-                 (isAllSectionsSelected || (r.section_id && setupSectionIds.includes(r.section_id)))
-          );
+          const approvedResources = getApprovedResourcesInScope();
 
           if (approvedResources.length === 0) {
             throw new Error("No approved sentence resources found in the selected scope. Please approve sentences in the Library first.");
           }
 
-          const card = cciCards.find(c => c.id === setupCciCardId);
-          if (!card) {
-            throw new Error("Invalid or inactive CCI Card selected.");
+          const missingAudio = getMissingAudioResources(approvedResources);
+          if (missingAudio.length > 0) {
+            setAudioPrepMode('create');
+            setAudioPrepResources(approvedResources);
+            setAudioPrepStatus(`${missingAudio.length} approved resources are missing EN/VI audio. Prepare TTS to launch this classroom.`);
+            return;
           }
 
-          const code = "CH-" + Math.floor(1000 + Math.random() * 9000);
-          const roomId = crypto.randomUUID();
-
-          const newRoom = {
-            id: roomId,
-            room_code: code,
-            title: roomTitle,
-            status: 'lobby',
-            current_round_id: null,
-            course_id: setupCourseId,
-            lesson_id: selectedLessonId,
-            host_name: hostName,
-            resource_scope_filter: { sectionIds: setupSectionIds },
-            snapshot_sentence_resource_ids: approvedResources.map(r => r.id),
-            scope_refreshed_at: new Date().toISOString(),
-            scoring_mode: setupScoringMode,
-            default_response_capture_mode: setupCaptureMode,
-            teacher_pin_hash: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-
-          const { error } = await supabase
-            .from('practice_rooms')
-            .insert([newRoom]);
-
-          if (error) throw error;
-          setActiveRoomId(roomId);
-          setLearnerRoomCode(code);
-          onRefreshData();
+          await createLiveRoom(approvedResources);
         } catch (err: any) {
           alert(`Room creation failed on Supabase: ${err.message}`);
         }
@@ -405,10 +636,9 @@ export default function SimulatorTab({
         if (activeRoom.default_response_capture_mode === 'assigned' && activeRoster.length > 0) {
           assignedLearnerId = activeRoster[0].learner_id;
         } else if (activeRoom.default_response_capture_mode === 'auto_rotate' && activeRoster.length > 0) {
-          const playedRounds = useSandbox 
-            ? sandboxDb.rounds.filter(rd => rd.room_id === activeRoom.id)
-            : (sandboxDb.rounds || []).filter(rd => rd.room_id === activeRoom.id); // fallback
-          const playedCount = useSandbox ? playedRounds.length : (sandboxDb.rounds || []).length;
+          const playedCount = useSandbox
+            ? sandboxDb.rounds.filter(rd => rd.room_id === activeRoom.id).length
+            : (activeRound?.round_index || 0);
           const nextIdx = playedCount % activeRoster.length;
           assignedLearnerId = activeRoster[nextIdx].learner_id;
         }
@@ -433,7 +663,13 @@ export default function SimulatorTab({
           const resource = resources.find(r => r.id === sentenceId);
           if (!resource) throw new Error("Sentence resource not found");
 
-          const nextIndex = (sandboxDb.rounds || []).filter(r => r.room_id === activeRoom.id).length + 1;
+          const { count: existingRoundCount, error: countErr } = await supabase
+            .from('room_rounds')
+            .select('id', { count: 'exact', head: true })
+            .eq('room_id', activeRoom.id);
+          if (countErr) throw countErr;
+
+          const nextIndex = (existingRoundCount || 0) + 1;
           const roundId = crypto.randomUUID();
 
           const newRound = {
@@ -473,6 +709,11 @@ export default function SimulatorTab({
             .eq('id', activeRoom.id);
           if (updErr) throw updErr;
 
+          await supabase
+            .from('room_memberships')
+            .update({ can_answer: true, presence_status: 'online', updated_at: new Date().toISOString() })
+            .eq('room_id', activeRoom.id);
+
           setRoundStartTime(Date.now());
           onRefreshData();
         }
@@ -481,6 +722,57 @@ export default function SimulatorTab({
       }
     };
     executeOpenRound();
+  };
+
+  const handleStartOrNextRound = () => {
+    if (!activeRoom || activeRound?.status === 'open') return;
+    if (roomRounds.length === 0) {
+      const snapshotResources = availableSentenceIds.map(id => resources.find(r => r.id === id)).filter(Boolean) as SentenceResource[];
+      const missingAudio = getMissingAudioResources(snapshotResources);
+      if (missingAudio.length > 0) {
+        setAudioPrepMode('start');
+        setAudioPrepResources(snapshotResources);
+        setAudioPrepStatus(`${missingAudio.length} session resources are missing EN/VI audio. Prepare TTS to start this classroom.`);
+        return;
+      }
+    }
+    const usedIds = new Set(roomRounds.map(r => r.sentence_resource_id));
+    const nextSentenceId = availableSentenceIds.find(id => !usedIds.has(id));
+    if (!nextSentenceId) {
+      alert('No unplayed sentence resources remain in this classroom session.');
+      return;
+    }
+    handleOpenRound(nextSentenceId);
+  };
+
+  const completedRounds = roomRounds.filter(r => r.status === 'closed').length;
+  const currentRoundNumber = activeRound?.status === 'open' ? activeRound.round_index : completedRounds;
+  const totalRounds = availableSentenceIds.length;
+  const sessionComplete = totalRounds > 0 && roomRounds.length >= totalRounds;
+  const turnLabel = activeRound ? String(activeRound.round_index).padStart(3, '0') : String(Math.min(roomRounds.length + 1, Math.max(totalRounds, 1))).padStart(3, '0');
+  const capturedTurnCount = roomResponseHistory.length;
+  const activeLearnerCount = activeRoster.filter(m => m.presence_status === 'online').length;
+  const performanceSummary = sandboxDb.cciPerformanceParameters
+    .map(param => ({
+      ...param,
+      count: roomResponseHistory.filter(resp =>
+        resp.response_color.toLowerCase() === param.color_code.toLowerCase() ||
+        resp.response_color.toLowerCase() === param.label.toLowerCase()
+      ).length
+    }))
+    .filter(param => param.count > 0);
+
+  const lockRosterAfterFirstResponse = async (round: RoomRound, capturedLearnerId: string) => {
+    if (useSandbox || !activeRoom) return;
+    await supabase
+      .from('room_rounds')
+      .update({ captured_learner_id: capturedLearnerId, updated_at: new Date().toISOString() })
+      .eq('id', round.id);
+
+    await supabase
+      .from('room_memberships')
+      .update({ can_answer: false, updated_at: new Date().toISOString() })
+      .eq('room_id', activeRoom.id);
   };
 
   // 3. Close Round Trigger
@@ -612,17 +904,15 @@ export default function SimulatorTab({
           if (updRoomErr) throw updRoomErr;
 
           // 2. Force close any remaining open rounds for this room
-          const openRounds = (sandboxDb.rounds || []).filter(rd => rd.room_id === activeRoom.id && rd.status === 'open');
-          for (const ord of openRounds) {
-            await supabase
-              .from('room_rounds')
-              .update({
-                status: 'closed',
-                closed_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', ord.id);
-          }
+          await supabase
+            .from('room_rounds')
+            .update({
+              status: 'closed',
+              closed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('room_id', activeRoom.id)
+            .eq('status', 'open');
 
           onRefreshData();
         } catch (err: any) {
@@ -802,6 +1092,7 @@ export default function SimulatorTab({
             }]);
 
           if (insErr) throw insErr;
+          await lockRosterAfterFirstResponse(activeRound, currentLearnerId);
           onRefreshData();
         } catch (err: any) {
           alert(`Submission rejected on Supabase: ${err.message}`);
@@ -946,6 +1237,7 @@ export default function SimulatorTab({
             }]);
 
           if (error) throw error;
+          await lockRosterAfterFirstResponse(activeRound, student.learner_id);
           onRefreshData();
         } catch (err: any) {
           alert("Failed to submit simulated response: " + err.message);
@@ -978,6 +1270,49 @@ export default function SimulatorTab({
             </button>
           )}
         </div>
+
+        {audioPrepMode && (
+          <div className="m-5 mb-0 bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3 animate-fadeIn">
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <h3 className="text-sm font-bold text-amber-900">Audio preparation required before class can start</h3>
+                </div>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  {audioPrepStatus || 'Some resources in this live classroom need EN/VI TTS audio. Prepare missing tracks, then the classroom flow will continue automatically.'}
+                </p>
+                <div className="text-[11px] text-amber-800 bg-white/70 border border-amber-100 rounded-lg p-2 max-h-32 overflow-auto font-mono whitespace-pre-line">
+                  {formatMissingAudioSummary(getMissingAudioResources(audioPrepResources)) || 'No missing audio detected.'}
+                  {getMissingAudioResources(audioPrepResources).length > 8 ? `\n...and ${getMissingAudioResources(audioPrepResources).length - 8} more resources` : ''}
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row lg:flex-col gap-2 lg:min-w-[210px]">
+                <button
+                  type="button"
+                  onClick={prepareMissingAudioAndContinue}
+                  disabled={audioPrepBusy}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-200 disabled:text-amber-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${audioPrepBusy ? 'animate-spin' : ''}`} />
+                  {audioPrepBusy ? 'Preparing TTS...' : audioPrepMode === 'create' ? 'Prepare TTS & Launch' : 'Prepare TTS & Start'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAudioPrepMode(null);
+                    setAudioPrepResources([]);
+                    setAudioPrepStatus('');
+                  }}
+                  disabled={audioPrepBusy}
+                  className="px-4 py-2 bg-white hover:bg-amber-100 disabled:opacity-50 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 1. ROOM CREATION / SETUP SCREEN */}
         {!activeRoom ? (
@@ -1155,13 +1490,7 @@ export default function SimulatorTab({
                   <strong>Approved resources in scope: </strong>
                   {
                     (() => {
-                      const isAllSectionsSelected = setupSectionIds.length === 0 || filteredSections.every(s => setupSectionIds.includes(s.id));
-                      return resources.filter(
-                        r => r.course_id === setupCourseId &&
-                             r.lesson_id === selectedLessonId &&
-                             r.approval_status === 'approved' &&
-                             (isAllSectionsSelected || (r.section_id && setupSectionIds.includes(r.section_id)))
-                      ).length;
+                      return getApprovedResourcesInScope().length;
                     })()
                   } sentence prompts.
                 </span>
@@ -1179,7 +1508,7 @@ export default function SimulatorTab({
         ) : (
           
           /* 2. LIVE CLASSROOM RUNNING CONSOLE */
-          <div className="p-5 flex-1 flex flex-col justify-between space-y-6">
+          <div className={`${isFocusMode ? 'fixed inset-4 z-50 bg-white rounded-2xl shadow-2xl overflow-auto border border-slate-200' : ''} p-5 flex-1 flex flex-col justify-between space-y-6`}>
             
             {/* Header Status */}
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
@@ -1191,7 +1520,7 @@ export default function SimulatorTab({
                   <button
                     type="button"
                     onClick={() => {
-                      const joinUrl = `${window.location.origin}${window.location.pathname}?room_code=${activeRoom.room_code}`;
+                      const joinUrl = `${window.location.origin}/learner?room_code=${activeRoom.room_code}`;
                       navigator.clipboard.writeText(joinUrl);
                       setIsCopied(true);
                       setTimeout(() => setIsCopied(false), 2000);
@@ -1212,10 +1541,21 @@ export default function SimulatorTab({
                   <span>Capture: <strong className="text-slate-600 uppercase">{activeRoom.default_response_capture_mode}</strong></span>
                   <span>•</span>
                   <span>Scoring: <strong className="text-slate-600 uppercase">{activeRoom.scoring_mode}</strong></span>
+                  <span>•</span>
+                  <span>Progress: <strong className="text-red-600">{currentRoundNumber}/{totalRounds}</strong></span>
                 </div>
               </div>
 
               <div className="flex flex-col items-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsFocusMode(!isFocusMode)}
+                  className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded border border-slate-200 transition-colors"
+                  title={isFocusMode ? 'Exit expanded teacher console' : 'Expand teacher console'}
+                >
+                  {isFocusMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                  {isFocusMode ? 'Exit Focus' : 'Expand'}
+                </button>
                 <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
                   activeRoom.status === 'lobby' ? 'bg-amber-100 text-amber-800' :
                   activeRoom.status === 'round_open' ? 'bg-red-100 text-red-800 animate-pulse' :
@@ -1224,6 +1564,19 @@ export default function SimulatorTab({
                 }`}>
                   {activeRoom.status}
                 </span>
+                {roomRounds.length === 0 ? (
+                  <button
+                    onClick={handleStartOrNextRound}
+                    disabled={activeRound?.status === 'open' || totalRounds === 0 || sessionComplete}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-500 text-white text-[10px] font-bold rounded transition-colors"
+                  >
+                    Start Session
+                  </button>
+                ) : (
+                  <span className="px-2 py-1 bg-red-50 text-red-700 border border-red-100 rounded text-[10px] font-bold">
+                    Auto next-turn ON
+                  </span>
+                )}
                 <button
                   onClick={handleFinishRoom}
                   className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold rounded transition-colors"
@@ -1233,136 +1586,45 @@ export default function SimulatorTab({
               </div>
             </div>
 
-            {/* Live Customizable Speech & Progression Controls */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <Languages className="w-4 h-4 text-indigo-600" />
-                    <span className="text-xs font-bold text-slate-700">Live Audio Language:</span>
-                  </div>
-                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setAudioLang('en')}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                        audioLang === 'en'
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      EN
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAudioLang('vi')}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                        audioLang === 'vi'
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      VI
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-slate-700">Round Advancement:</span>
-                  <div className="inline-flex rounded-lg p-0.5 bg-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setAutoAdvance(false)}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                        !autoAdvance
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Manual
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAutoAdvance(true)}
-                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1 ${
-                        autoAdvance
-                          ? 'bg-red-600 text-white shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <Sparkles className="w-3 h-3 animate-pulse" />
-                      Auto-Advance
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowAudioSettings(!showAudioSettings)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${
-                    showAudioSettings
-                      ? 'bg-slate-800 text-white border-slate-800 shadow-2xs'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <Settings className="w-4 h-4" />
-                  Speech Settings
-                  {showAudioSettings ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
+            {teacherToast && (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-3 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+                <Bell className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{teacherToast}</span>
               </div>
+            )}
 
-              {/* Collapsible settings panel */}
-              {showAudioSettings && (
-                <div className="bg-white p-4 rounded-lg border border-slate-200 grid grid-cols-1 md:grid-cols-4 gap-4 animate-fadeIn">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Volume ({Math.round(audioVolume * 100)}%)</label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={audioVolume}
-                      onChange={(e) => setAudioVolume(parseFloat(e.target.value))}
-                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Speed Rate ({audioRate}x)</label>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2"
-                      step="0.1"
-                      value={audioRate}
-                      onChange={(e) => setAudioRate(parseFloat(e.target.value))}
-                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Pitch ({audioPitch}x)</label>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2"
-                      step="0.1"
-                      value={audioPitch}
-                      onChange={(e) => setAudioPitch(parseFloat(e.target.value))}
-                      className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                    />
-                  </div>
-                  <div className="flex items-center justify-start md:justify-center">
-                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={autoPlayAudio}
-                        onChange={(e) => setAutoPlayAudio(e.target.checked)}
-                        className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4"
-                      />
-                      <span>Auto-play on launch</span>
-                    </label>
-                  </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Session Turns</span>
+                <p className="text-lg font-black text-slate-900 mt-1">{capturedTurnCount}/{totalRounds}</p>
+                <p className="text-[10px] text-slate-400">captured / total</p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Online Learners</span>
+                <p className="text-lg font-black text-slate-900 mt-1">{activeLearnerCount}</p>
+                <p className="text-[10px] text-slate-400">joined in this classroom</p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Current Turn</span>
+                <p className="text-lg font-black text-red-700 mt-1">{turnLabel}</p>
+                <p className="text-[10px] text-slate-400">of {String(totalRounds || 0).padStart(3, '0')}</p>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-3">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">CCI Performance</span>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {performanceSummary.length === 0 ? (
+                    <span className="text-[10px] text-slate-400">No captures yet</span>
+                  ) : performanceSummary.map(param => (
+                    <span
+                      key={param.id}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
+                      style={{ backgroundColor: param.color_hex }}
+                    >
+                      {param.label}: {param.count}
+                    </span>
+                  ))}
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Main Workspace Layout */}
@@ -1376,14 +1638,7 @@ export default function SimulatorTab({
                       <Users className="w-3.5 h-3.5" />
                       Roster ({activeRoster.length})
                     </span>
-                    {activeRoster.length === 0 && (
-                      <button
-                        onClick={handleSpawnMockStudents}
-                        className="text-[9px] text-indigo-600 hover:underline font-bold"
-                      >
-                        + Demo Users
-                      </button>
-                    )}
+
                   </div>
 
                   <div className="space-y-1.5 max-h-[180px] overflow-auto">
@@ -1393,7 +1648,9 @@ export default function SimulatorTab({
                       activeRoster.map(m => (
                         <div key={m.id} className="flex items-center justify-between p-1.5 bg-white border border-slate-100 rounded text-xs">
                           <span className="font-semibold text-slate-700">{m.learner.display_name}</span>
-                          <span className="text-[9px] bg-red-50 text-red-600 px-1 rounded font-bold">Online</span>
+                          <span className={`text-[9px] px-1 rounded font-bold ${m.can_answer ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                            {m.can_answer ? 'Online' : 'Locked'}
+                          </span>
                         </div>
                       ))
                     )}
@@ -1422,7 +1679,7 @@ export default function SimulatorTab({
                     <div>
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-mono font-bold text-red-700 uppercase bg-red-100 px-2 py-0.5 rounded">
-                          Round #{activeRound.round_index} • OPEN
+                          Turn {String(activeRound.round_index).padStart(3, '0')} • OPEN
                         </span>
                         
                         <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono">
@@ -1431,53 +1688,46 @@ export default function SimulatorTab({
                         </div>
                       </div>
 
-                      {/* Display prompt details */}
-                      <div className="mt-3.5 space-y-2.5">
+                      {/* Teacher-only active turn audio card */}
+                      <div className="mt-4">
                         {(() => {
                           const res = resources.find(r => r.id === activeRound.sentence_resource_id);
                           if (!res) return null;
                           return (
-                            <>
-                              <div className="flex items-center justify-between bg-slate-100 border border-slate-200 rounded-lg p-3">
-                                <div>
-                                  <span className="text-[9px] text-slate-400 font-bold uppercase block">Sentence Code: {res.sentence_code}</span>
-                                  <h4 className="text-xs font-semibold text-slate-800 leading-normal mt-0.5">
-                                    Challenge: <strong className="text-indigo-700">“{res.text_prompt}”</strong>
-                                  </h4>
+                            <div className="bg-white border border-red-100 rounded-2xl p-6 md:p-8 text-center space-y-5">
+                              <div className="space-y-1">
+                                <span className="text-[10px] font-mono font-black text-red-700 uppercase bg-red-100 px-3 py-1 rounded-full tracking-[0.2em]">
+                                  TURN {String(activeRound.round_index).padStart(3, '0')} / {String(totalRounds || 0).padStart(3, '0')}
+                                </span>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                  Teacher prompt only • Learners see metadata, not answer text
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => playSentenceAudio(res)}
+                                className={`mx-auto w-32 h-32 md:w-40 md:h-40 rounded-full flex items-center justify-center transition-all shadow-lg border ${
+                                  isAudioPlaying
+                                    ? 'bg-red-600 text-white border-red-500 animate-pulse shadow-red-200'
+                                    : 'bg-slate-950 hover:bg-slate-800 text-white border-slate-900 hover:scale-105'
+                                }`}
+                                title="Play current turn audio"
+                              >
+                                <Volume2 className={`w-16 h-16 md:w-20 md:h-20 ${isAudioPlaying ? 'animate-bounce' : ''}`} />
+                              </button>
+
+                              <div className="max-w-2xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-3 text-left">
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Vietnamese</span>
+                                  <p className="text-sm font-semibold text-slate-900 mt-1 leading-relaxed">{res.text_vi || '—'}</p>
                                 </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => playSentenceAudio(res)}
-                                  className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
-                                    isAudioPlaying
-                                      ? 'bg-red-600 text-white animate-pulse'
-                                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-3xs'
-                                  }`}
-                                  title="Play speech audio"
-                                >
-                                  <Volume2 className={`w-4 h-4 ${isAudioPlaying ? 'animate-bounce' : ''}`} />
-                                  <span>{isAudioPlaying ? 'Playing...' : `Speak (${audioLang.toUpperCase()})`}</span>
-                                </button>
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">English</span>
+                                  <p className="text-sm font-semibold text-slate-900 mt-1 leading-relaxed">{res.text_en || res.text_prompt || '—'}</p>
+                                </div>
                               </div>
-
-                              <div className="p-3 bg-white border border-slate-100 rounded-lg space-y-2 text-xs">
-                                <p className="text-slate-700 flex items-start gap-1">
-                                  <span className="text-[9px] font-bold text-slate-400 w-20 uppercase shrink-0">English:</span>
-                                  <strong className="flex-1 text-slate-800">{res.text_en}</strong>
-                                </p>
-                                <p className="text-slate-700 flex items-start gap-1">
-                                  <span className="text-[9px] font-bold text-slate-400 w-20 uppercase shrink-0">Vietnamese:</span>
-                                  <strong className="flex-1 text-slate-800">{res.text_vi}</strong>
-                                </p>
-                                {(res.audio_en_url || res.audio_vi_url) && (
-                                  <div className="flex items-center gap-2 pt-1 text-[10px] text-slate-500 border-t border-slate-100 mt-1">
-                                    <Check className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                                    <span>Pre-recorded voice stream is available.</span>
-                                  </div>
-                                )}
-                              </div>
-                            </>
+                            </div>
                           );
                         })()}
                       </div>
@@ -1485,10 +1735,10 @@ export default function SimulatorTab({
 
                     {/* Live responses gathered */}
                     <div className="border-t border-red-100 pt-3 space-y-2">
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Captured Response:</span>
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Captured Turn Response:</span>
                       {roundResponses.length === 0 ? (
                         <div className="text-center py-4 text-[11px] text-slate-400 italic">
-                          Waiting for students to transmit response colors...
+                          Waiting for the first learner response...
                         </div>
                       ) : (
                         roundResponses.map(resp => (
@@ -1528,7 +1778,7 @@ export default function SimulatorTab({
                         <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg font-bold flex items-center justify-between animate-pulse">
                           <span className="flex items-center gap-2">
                             <Clock className="w-4 h-4 text-red-600 shrink-0 animate-spin" style={{ animationDuration: '3s' }} />
-                            <span>Auto-advancing to next sentence prompt...</span>
+                            <span>Auto-opening next turn...</span>
                           </span>
                           <span className="bg-red-100 text-red-900 px-2 py-0.5 rounded font-mono">
                             {autoAdvanceCountdown}s
@@ -1536,57 +1786,166 @@ export default function SimulatorTab({
                         </div>
                       )}
 
-                      <button
-                        onClick={handleCloseRound}
-                        className="w-full mt-2 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded font-bold text-xs transition-colors text-center block"
-                      >
-                        Close & Finalize Round Responses
-                      </button>
+                      <div className="text-[11px] text-slate-500 bg-slate-100 border border-slate-200 rounded-lg p-2 flex items-center gap-2">
+                        <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <span>First response locks this turn. The next turn opens automatically from the session sentence list.</span>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  /* SELECT AND OPEN NEXT ROUND */
+                  /* SESSION CONTROL / NEXT ROUND PREVIEW */
                   <div className="border border-slate-200 rounded-xl p-4 space-y-4 flex-1 flex flex-col justify-between bg-slate-50/50">
-                    <div>
-                      <h3 className="font-sans font-semibold text-slate-800 text-xs pb-1 border-b border-slate-200">
-                        Launch Next Practice Sentence
-                      </h3>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        Select an approved sentence from your scope snapshot to open the next grading round.
-                      </p>
-
-                      <div className="space-y-2 mt-4 max-h-[220px] overflow-auto">
-                        {availableSentenceIds.map((sid, idx) => {
-                          const res = resources.find(r => r.id === sid);
-                          if (!res) return null;
-                          return (
-                            <div key={res.id} className="p-2.5 bg-white border border-slate-200 rounded-lg flex items-center justify-between text-xs">
+                    {(() => {
+                      const usedIds = new Set(roomRounds.map(r => r.sentence_resource_id));
+                      const nextSentenceId = availableSentenceIds.find(id => !usedIds.has(id));
+                      const nextRes = nextSentenceId ? resources.find(r => r.id === nextSentenceId) : null;
+                      const nextCard = cciCards.find(c => c.id === setupCciCardId);
+                      const isComplete = sessionComplete;
+                      return (
+                        <>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                               <div>
-                                <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-600 px-1 py-0.5 rounded mr-1.5">
-                                  {res.sentence_code}
+                                <h3 className="font-sans font-semibold text-slate-800 text-xs">
+                                  Live Session Controls
+                                </h3>
+                                <p className="text-[11px] text-slate-500 mt-1">
+                                  One live classroom contains the full approved sentence snapshot. After the first response, the system auto-opens the next turn.
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono font-bold bg-white border border-slate-200 text-slate-600 px-2 py-1 rounded">
+                                  {currentRoundNumber}/{totalRounds || 0}
                                 </span>
-                                <span className="font-medium text-slate-700 truncate max-w-[200px] inline-block align-middle">
-                                  {res.text_prompt}
-                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsFocusMode(!isFocusMode)}
+                                  className="p-1.5 bg-white hover:bg-slate-100 text-slate-600 rounded-lg border border-slate-200 transition-colors"
+                                  title={isFocusMode ? 'Exit expanded live controls' : 'Expand live controls'}
+                                >
+                                  {isFocusMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+
+                            {nextRes ? (
+                              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Next sentence preview</span>
+                                  <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">{nextRes.sentence_code}</span>
+                                  <span className="text-[10px] text-indigo-700 font-bold">{nextCard?.label || 'Selected CCI'} • X={nextCard?.standard_value || 1}</span>
+                                  <span className="text-[10px] text-red-700 font-bold">Ω={nextRes.cvr_value || nextRes.default_cvr_value || 1}</span>
+                                </div>
+                                <p className="text-xs text-slate-700 leading-relaxed">
+                                  Teacher audio/text stays visible only here. Learner terminals receive metadata and response buttons only.
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="bg-white border border-slate-200 rounded-xl p-4 text-center text-xs text-slate-500">
+                                No approved sentence remains in this session snapshot.
+                              </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center justify-between gap-4 bg-white border border-slate-200 rounded-xl p-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-1.5">
+                                  <Languages className="w-4 h-4 text-indigo-600" />
+                                  <span className="text-xs font-bold text-slate-700">Audio:</span>
+                                </div>
+                                <div className="inline-flex rounded-lg p-0.5 bg-slate-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => setAudioLang('en')}
+                                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${audioLang === 'en' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                                  >
+                                    EN
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAudioLang('vi')}
+                                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${audioLang === 'vi' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
+                                  >
+                                    VI
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-700">Next CCI:</span>
+                                <select
+                                  value={setupCciCardId}
+                                  onChange={(e) => setSetupCciCardId(e.target.value)}
+                                  className="text-xs p-1.5 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 max-w-[220px]"
+                                >
+                                  {cciCards.map(c => (
+                                    <option key={c.id} value={c.id}>{c.label} (X={c.standard_value})</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-700 px-3 py-1.5 rounded-lg">
+                                <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                                <span className="text-xs font-bold">Auto next-turn ON</span>
                               </div>
 
                               <button
-                                onClick={() => handleOpenRound(res.id)}
-                                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold rounded text-[10px] transition-colors"
+                                type="button"
+                                onClick={() => setShowAudioSettings(!showAudioSettings)}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${showAudioSettings ? 'bg-slate-800 text-white border-slate-800 shadow-2xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
                               >
-                                Launch Round
+                                <Settings className="w-4 h-4" />
+                                Speech Settings
+                                {showAudioSettings ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                               </button>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
 
-                    <div className="text-[11px] text-slate-400 bg-slate-100 p-2 rounded">
-                      Scoring snapshot standard will lock to: <strong className="text-slate-600">X={
-                        cciCards.find(c => c.id === setupCciCardId)?.standard_value || 10
-                      }</strong>.
-                    </div>
+                            {showAudioSettings && (
+                              <div className="bg-white p-4 rounded-lg border border-slate-200 grid grid-cols-1 md:grid-cols-4 gap-4 animate-fadeIn">
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Volume ({Math.round(audioVolume * 100)}%)</label>
+                                  <input type="range" min="0" max="1" step="0.1" value={audioVolume} onChange={(e) => setAudioVolume(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Speed Rate ({audioRate}x)</label>
+                                  <input type="range" min="0.5" max="2" step="0.1" value={audioRate} onChange={(e) => setAudioRate(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Pitch ({audioPitch}x)</label>
+                                  <input type="range" min="0.5" max="2" step="0.1" value={audioPitch} onChange={(e) => setAudioPitch(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                </div>
+                                <div className="flex items-center justify-start md:justify-center">
+                                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                                    <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4" />
+                                    <span>Auto-play on launch</span>
+                                  </label>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            {roomRounds.length === 0 ? (
+                              <button
+                                onClick={handleStartOrNextRound}
+                                disabled={!nextRes || activeRound?.status === 'open' || isComplete}
+                                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-500 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm"
+                              >
+                                <Play className="w-3.5 h-3.5" />
+                                Start Session
+                              </button>
+                            ) : (
+                              <div className="w-full py-3 bg-red-50 border border-red-100 text-red-700 rounded-lg text-xs font-bold text-center">
+                                {isComplete ? 'Session Complete' : 'Waiting for first response / auto-opening next turn'}
+                              </div>
+                            )}
+                            <div className="text-[11px] text-slate-400 bg-slate-100 p-2 rounded flex items-center gap-2">
+                              <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                              <span>First-response mode records one winner only; after capture, all learner pads lock until the next round opens.</span>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

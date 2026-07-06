@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { SentenceResource, AudioGenerationJob } from '../types';
+import { SchemaHealthResult } from '../lib/schemaHealth';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { 
   Volume2, RefreshCw, CheckCircle2, AlertCircle, Cpu, Play, Search, ShieldAlert, Sparkles, Plus, Check
@@ -14,6 +15,7 @@ interface AudioGeneratorTabProps {
   useSandbox: boolean;
   resources: SentenceResource[];
   jobs: AudioGenerationJob[];
+  schemaHealth: SchemaHealthResult | null;
   onRefreshData: () => void;
 }
 
@@ -21,10 +23,29 @@ export default function AudioGeneratorTab({
   useSandbox,
   resources,
   jobs,
+  schemaHealth,
   onRefreshData
 }: AudioGeneratorTabProps) {
   const [processingJobId, setProcessingJobId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
+
+  if (schemaHealth && !schemaHealth.ttsServiceAvailable) {
+    return (
+      <div className="bg-white border border-amber-200 rounded-2xl p-6 shadow-xs space-y-4" id="audio-schema-gap">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">TTS service is not available yet</h2>
+            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+              Audio generation expects Supabase Edge Function <code className="font-mono bg-amber-100 px-1 rounded">generate-resource-audio</code>
+              and Storage bucket <code className="font-mono bg-amber-100 px-1 rounded">resource-audio</code>.
+            </p>
+            <p className="text-[10px] text-amber-700 mt-3 font-mono">Checked: {new Date(schemaHealth.checkedAt).toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const filteredJobs = jobs.filter(j => {
     if (filterStatus === 'all') return true;
@@ -81,7 +102,7 @@ export default function AudioGeneratorTab({
         const { error: jobErr } = await supabase
           .from('audio_generation_jobs')
           .update({
-            status: 'completed',
+            status: 'succeeded',
             public_url: utteranceBlobUrl,
             completed_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -132,7 +153,7 @@ export default function AudioGeneratorTab({
             Server-Side Audio Generation Workspace
           </h2>
           <p className="text-xs text-slate-500 leading-relaxed">
-            In live production, sentence audio is compiled via an **Edge Function** trigger executing TTS providers (such as NineRouter or Google Cloud Text-To-Speech) and persisting mp3 blobs directly to the <code className="font-mono bg-slate-100 text-slate-700 px-1 rounded">resource-audio</code> bucket. 
+            In live production, sentence audio is generated through Supabase Edge Function <code className="font-mono bg-slate-100 text-slate-700 px-1 rounded">generate-resource-audio</code> and persisted to the <code className="font-mono bg-slate-100 text-slate-700 px-1 rounded">resource-audio</code> bucket. 
           </p>
           <div className="text-[11px] text-indigo-700 font-semibold bg-indigo-50 p-2.5 rounded-lg border border-indigo-100 inline-block">
             🔊 This console uses the HTML5 Web Speech Synthesis API to simulate correct multilingual pronunciation output!

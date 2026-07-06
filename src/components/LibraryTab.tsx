@@ -6,6 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { Course, Lesson, LessonSection, SentenceResource, CCIStandardCard, CVRUnit } from '../types';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
+import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
+import { generateResourceAudio } from '../lib/ttsService';
 import { 
   Plus, Check, Play, Edit2, Trash2, Globe, FileText, 
   Volume2, Sliders, Hash, Shield, RefreshCw, AlertCircle,
@@ -43,6 +45,13 @@ export default function LibraryTab({
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
   const [audioFilter, setAudioFilter] = useState<'all' | 'missing_en' | 'missing_vi' | 'missing_any' | 'has_both'>('all');
 
+  // Bulk resource actions
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const [bulkCvrValue, setBulkCvrValue] = useState<number>(1);
+  const [bulkCvrBusy, setBulkCvrBusy] = useState(false);
+  const [bulkTtsBusy, setBulkTtsBusy] = useState(false);
+  const [bulkActionStatus, setBulkActionStatus] = useState<string>('');
+
   // View style & Audio states
   const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
   const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null);
@@ -58,6 +67,8 @@ export default function LibraryTab({
   // Reset pagination on filter or view mode change or itemsPerPage change
   useEffect(() => {
     setCurrentPage(1);
+    setSelectedResourceIds([]);
+    setBulkActionStatus('');
   }, [selectedCourseId, selectedLessonId, selectedSectionId, audioFilter, viewMode, itemsPerPage]);
 
   // Automatically sync/validate selections when data lists update (e.g., useSandbox / database source changes)
@@ -103,7 +114,33 @@ export default function LibraryTab({
     }
   }, [sections, selectedLessonId, selectedCourseId, lessons, selectedSectionId]);
 
-  const playAudio = (url: string, key: string) => {
+  const clearBrokenAudioReference = async (url: string, key: string) => {
+    if (useSandbox) return;
+
+    const [resourceId, lang] = key.split('_');
+    const audioField = lang === 'vi' ? 'audio_vi_url' : lang === 'en' ? 'audio_en_url' : null;
+    if (!resourceId || !audioField) return;
+
+    const resource = resources.find(r => r.id === resourceId);
+    if (!resource) return;
+
+    const currentValue = audioField === 'audio_vi_url' ? resource.audio_vi_url : resource.audio_en_url;
+    if (currentValue !== url) return;
+
+    await supabase
+      .from('sentence_resources')
+      .update({
+        [audioField]: null,
+        audio_url: resource.audio_url === url ? null : resource.audio_url,
+        audio_variants: resource.audio_variants || {},
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', resourceId);
+
+    onRefreshData();
+  };
+
+  const playAudio = async (url: string, key: string) => {
     if (activeAudio) {
       activeAudio.pause();
       if (currentlyPlaying === key) {
@@ -112,14 +149,37 @@ export default function LibraryTab({
         return;
       }
     }
-    const audio = new Audio(url);
-    audio.play().catch(err => {
-      console.error("Audio playback error:", err);
-    });
+
+    const playableUrl = resolveResourceAudioUrl(url);
+    if (!playableUrl) return;
+
+    const exists = await checkResourceAudioExists(url);
+    if (exists === false) {
+      await clearBrokenAudioReference(url, key);
+      alert('Audio file is missing in Supabase Storage. Please generate this audio again.');
+      setCurrentlyPlaying(null);
+      setActiveAudio(null);
+      return;
+    }
+
+    const audio = new Audio(playableUrl);
+    audio.preload = 'auto';
     audio.onended = () => {
       setCurrentlyPlaying(null);
       setActiveAudio(null);
     };
+    audio.onerror = async () => {
+      console.error('Audio source failed to load:', { originalUrl: url, playableUrl });
+      await clearBrokenAudioReference(url, key);
+      setCurrentlyPlaying(null);
+      setActiveAudio(null);
+    };
+    audio.play().catch(async err => {
+      console.error('Audio playback error:', err, { originalUrl: url, playableUrl });
+      await clearBrokenAudioReference(url, key);
+      setCurrentlyPlaying(null);
+      setActiveAudio(null);
+    });
     setActiveAudio(audio);
     setCurrentlyPlaying(key);
   };
@@ -183,6 +243,96 @@ export default function LibraryTab({
   const totalPages = Math.max(1, Math.ceil(filteredResources.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedResources = filteredResources.slice(startIndex, startIndex + itemsPerPage);
+  const selectedResources = resources.filter(r => selectedResourceIds.includes(r.id));
+  const pageResourceIds = paginatedResources.map(r => r.id);
+  const allPageSelected = pageResourceIds.length > 0 && pageResourceIds.every(id => selectedResourceIds.includes(id));
+
+  const toggleResourceSelection = (resourceId: string) => {
+    setSelectedResourceIds(prev => prev.includes(resourceId) ? prev.filter(id => id !== resourceId) : [...prev, resourceId]);
+  };
+
+  const toggleCurrentPageSelection = () => {
+    setSelectedResourceIds(prev => {
+      if (allPageSelected) return prev.filter(id => !pageResourceIds.includes(id));
+      return [...new Set([...prev, ...pageResourceIds])];
+    });
+  };
+
+  const selectAllFilteredResources = () => {
+    setSelectedResourceIds(filteredResources.map(r => r.id));
+  };
+
+  const handleBulkUpdateCvr = async () => {
+    if (selectedResourceIds.length === 0) return alert('Select at least one resource first.');
+    const nextCvr = Number(bulkCvrValue);
+    if (!Number.isFinite(nextCvr) || nextCvr <= 0) return alert('CVR must be a positive number.');
+    if (!window.confirm(`Update CVR Ω to ${nextCvr} for ${selectedResourceIds.length} selected resources?`)) return;
+
+    setBulkCvrBusy(true);
+    setBulkActionStatus('Updating CVR values...');
+    try {
+      if (useSandbox) {
+        sandboxDb.sentenceResources = sandboxDb.sentenceResources.map(r =>
+          selectedResourceIds.includes(r.id)
+            ? { ...r, cvr_value: nextCvr, default_cvr_value: nextCvr, updated_at: new Date().toISOString() }
+            : r
+        );
+      } else {
+        const { error } = await supabase
+          .from('sentence_resources')
+          .update({ cvr_value: nextCvr, default_cvr_value: nextCvr, updated_at: new Date().toISOString() })
+          .in('id', selectedResourceIds);
+        if (error) throw error;
+      }
+      setBulkActionStatus(`Updated CVR Ω=${nextCvr} for ${selectedResourceIds.length} resources.`);
+      onRefreshData();
+    } catch (err: any) {
+      setBulkActionStatus('CVR update failed: ' + (err.message || String(err)));
+      alert('Failed to update CVR: ' + (err.message || String(err)));
+    } finally {
+      setBulkCvrBusy(false);
+    }
+  };
+
+  const handleBulkGenerateMissingAudio = async (mode: 'en' | 'vi' | 'both') => {
+    if (selectedResourceIds.length === 0) return alert('Select at least one resource first.');
+    const targets: Array<{ resource: SentenceResource; lang: 'en' | 'vi' }> = [];
+    selectedResources.forEach(resource => {
+      if ((mode === 'en' || mode === 'both') && !resource.audio_en_url) targets.push({ resource, lang: 'en' });
+      if ((mode === 'vi' || mode === 'both') && !resource.audio_vi_url) targets.push({ resource, lang: 'vi' });
+    });
+
+    if (targets.length === 0) {
+      setBulkActionStatus('Selected resources already have the requested audio tracks.');
+      return;
+    }
+    if (!window.confirm(`Generate ${targets.length} missing TTS tracks via Supabase Edge Function generate-resource-audio?`)) return;
+
+    setBulkTtsBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    try {
+      for (const target of targets) {
+        setBulkActionStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${target.resource.sentence_code}`);
+        try {
+          if (useSandbox) {
+            sandboxDb.queueAudioJob(target.resource.id, target.lang, 'Admin Operator');
+          } else {
+            await generateResourceAudio(target.resource, target.lang);
+          }
+          ok += 1;
+        } catch (err: any) {
+          failures.push(`${target.resource.sentence_code} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
+        }
+      }
+      setBulkActionStatus(`TTS complete: ${ok}/${targets.length} generated${failures.length ? `, ${failures.length} failed` : ''}.`);
+      if (failures.length) console.warn('Bulk TTS failures:', failures);
+      onRefreshData();
+      if (failures.length) alert('Some TTS generations failed:\n' + failures.slice(0, 6).join('\n'));
+    } finally {
+      setBulkTtsBusy(false);
+    }
+  };
 
   // Handle resource submission
   const handleSaveResource = (e: React.FormEvent) => {
@@ -536,38 +686,18 @@ export default function LibraryTab({
         alert(err.message);
       }
     } else {
-      const executeQueueAudio = async () => {
+      const executeGenerateAudio = async () => {
         try {
           const resource = resources.find(r => r.id === resourceId);
           if (!resource) throw new Error("Sentence resource not found");
-
-          const storagePath = `sentence-audio/${resource.course_id}/${resource.lesson_id}/${resource.sentence_code}-${lang}.mp3`;
-
-          const { error } = await supabase
-            .from('audio_generation_jobs')
-            .insert([{
-              id: crypto.randomUUID(),
-              resource_id: resourceId,
-              language: lang,
-              status: 'queued',
-              provider: 'Gemini Text-To-Speech (Live)',
-              model: 'gemini-2.5-flash',
-              storage_path: storagePath,
-              public_url: null,
-              error_message: null,
-              requested_by: 'Admin Operator',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              completed_at: null
-            }]);
-          if (error) throw error;
-          alert(`Queued Text-To-Speech audio job for language [${lang.toUpperCase()}] in live database!`);
+          const result = await generateResourceAudio(resource, lang);
+          alert(`Generated ${lang.toUpperCase()} audio via Supabase Edge Function generate-resource-audio.\n${result.publicUrl || result.storagePath}`);
           onRefreshData();
         } catch (err: any) {
-          alert("Failed to queue live audio job: " + err.message);
+          alert("Failed to generate live audio: " + (err.message || String(err)));
         }
       };
-      executeQueueAudio();
+      executeGenerateAudio();
     }
   };
 
@@ -835,6 +965,96 @@ export default function LibraryTab({
               </div>
             </div>
 
+            {/* Bulk Resource Actions */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-slate-800">Selected resources: {selectedResourceIds.length}</span>
+                    <button
+                      type="button"
+                      onClick={toggleCurrentPageSelection}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold transition-colors"
+                    >
+                      {allPageSelected ? 'Unselect Page' : 'Select Page'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={selectAllFilteredResources}
+                      disabled={filteredResources.length === 0}
+                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded text-[10px] font-bold transition-colors"
+                    >
+                      Select All Filtered ({filteredResources.length})
+                    </button>
+                    {selectedResourceIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedResourceIds([])}
+                        className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[10px] font-bold transition-colors"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Bulk tools update live Supabase rows only after confirmation. TTS uses Edge Function <strong>generate-resource-audio</strong> and will ask for the TTS admin PIN if not cached.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase">Set CVR Ω</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      value={bulkCvrValue}
+                      onChange={(e) => setBulkCvrValue(Number(e.target.value))}
+                      className="w-20 text-xs p-1 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none font-mono font-bold"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleBulkUpdateCvr}
+                      disabled={bulkCvrBusy || selectedResourceIds.length === 0}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-500 text-white rounded text-[10px] font-bold transition-colors"
+                    >
+                      {bulkCvrBusy ? 'Saving...' : 'Apply'}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleBulkGenerateMissingAudio('en')}
+                    disabled={bulkTtsBusy || selectedResourceIds.length === 0}
+                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold transition-colors"
+                  >
+                    Generate Missing EN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkGenerateMissingAudio('vi')}
+                    disabled={bulkTtsBusy || selectedResourceIds.length === 0}
+                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold transition-colors"
+                  >
+                    Generate Missing VI
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkGenerateMissingAudio('both')}
+                    disabled={bulkTtsBusy || selectedResourceIds.length === 0}
+                    className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 text-white rounded text-[10px] font-bold transition-colors"
+                  >
+                    {bulkTtsBusy ? 'Generating...' : 'Generate Missing Both'}
+                  </button>
+                </div>
+              </div>
+              {bulkActionStatus && (
+                <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg p-2 font-medium">
+                  {bulkActionStatus}
+                </div>
+              )}
+            </div>
+
             {/* Add / Edit Form */}
             {showAddResource && (
               <form onSubmit={handleSaveResource} className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
@@ -959,6 +1179,15 @@ export default function LibraryTab({
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        <th className="py-3 px-4 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={allPageSelected}
+                            onChange={toggleCurrentPageSelection}
+                            className="rounded border-slate-300 text-red-600 focus:ring-red-500"
+                            aria-label="Select all resources on current page"
+                          />
+                        </th>
                         <th className="py-3 px-4 w-12 text-center">STT</th>
                         <th className="py-3 px-4 w-44">COURSE / LESSON</th>
                         <th className="py-3 px-4">CONTENT / TRANSLATION</th>
@@ -970,13 +1199,22 @@ export default function LibraryTab({
                     <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
                       {filteredResources.length === 0 ? (
                         <tr>
-                          <td colSpan={useSandbox ? 6 : 5} className="text-center py-12 text-slate-400 italic">
+                          <td colSpan={useSandbox ? 7 : 6} className="text-center py-12 text-slate-400 italic">
                             No resources found.
                           </td>
                         </tr>
                       ) : (
                         paginatedResources.map((r, idx) => (
-                          <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                          <tr key={r.id} className={`hover:bg-slate-50/50 transition-colors ${selectedResourceIds.includes(r.id) ? 'bg-red-50/30' : ''}`}>
+                            <td className="py-3.5 px-4 text-center">
+                              <input
+                                type="checkbox"
+                                checked={selectedResourceIds.includes(r.id)}
+                                onChange={() => toggleResourceSelection(r.id)}
+                                className="rounded border-slate-300 text-red-600 focus:ring-red-500"
+                                aria-label={`Select resource ${r.sentence_code}`}
+                              />
+                            </td>
                             <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-400">
                               #{startIndex + idx + 1}
                             </td>
@@ -1105,11 +1343,19 @@ export default function LibraryTab({
                   </div>
                 ) : (
                   paginatedResources.map((r, idx) => (
-                    <div key={r.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs hover:shadow-sm hover:border-slate-300 transition-all flex flex-col justify-between min-h-[180px]">
+                    <div key={r.id} className={`bg-white border rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all flex flex-col justify-between min-h-[180px] ${selectedResourceIds.includes(r.id) ? 'border-red-300 ring-1 ring-red-100 bg-red-50/20' : 'border-slate-200 hover:border-slate-300'}`}>
                       <div>
                         {/* Top: English and Vietnamese text block with STT index */}
                         <div className="flex items-start justify-between gap-4">
-                          <div className="space-y-2 flex-1">
+                          <div className="flex items-start gap-2 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={selectedResourceIds.includes(r.id)}
+                              onChange={() => toggleResourceSelection(r.id)}
+                              className="mt-1 rounded border-slate-300 text-red-600 focus:ring-red-500 shrink-0"
+                              aria-label={`Select resource ${r.sentence_code}`}
+                            />
+                            <div className="space-y-2 flex-1">
                             <div className="flex items-start gap-2">
                               <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-extrabold mt-0.5 shrink-0">EN</span>
                               <span className="text-slate-800 font-bold leading-relaxed text-[13px]">{r.text_en || 'None'}</span>
@@ -1117,6 +1363,7 @@ export default function LibraryTab({
                             <div className="flex items-start gap-2">
                               <span className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-[9px] font-extrabold mt-0.5 shrink-0">VI</span>
                               <span className="text-slate-500 font-semibold leading-relaxed text-[12px]">{r.text_vi || 'None'}</span>
+                            </div>
                             </div>
                           </div>
                           

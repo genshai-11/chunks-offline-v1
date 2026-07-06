@@ -4,8 +4,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Course, Lesson, LessonSection, SentenceResource, PracticeRoom, RoomRound, Learner, LearnerResponse, LearnerProgress } from '../types';
-import { sandboxDb } from '../lib/supabaseClient';
+import { Course, Lesson, SentenceResource, PracticeRoom, RoomRound, Learner, LearnerResponse, LearnerProgress } from '../types';
 import { 
   History, Calendar, Award, Star, BarChart2, PieChart, Users, CheckCircle, 
   HelpCircle, ChevronDown, ChevronUp, Plus, Trash2, Sliders, Filter,
@@ -13,7 +12,7 @@ import {
 } from 'lucide-react';
 import { 
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area, 
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell, ScatterChart, Scatter
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell, ScatterChart, Scatter, LabelList
 } from 'recharts';
 
 interface HistoryTabProps {
@@ -24,6 +23,7 @@ interface HistoryTabProps {
   rounds: RoomRound[];
   responses: LearnerResponse[];
   progress: LearnerProgress[];
+  learners: Learner[];
 }
 
 interface CustomField {
@@ -42,7 +42,8 @@ export default function HistoryTab({
   rooms,
   rounds,
   responses,
-  progress
+  progress,
+  learners
 }: HistoryTabProps) {
 
   // --- FILTERS STATE ---
@@ -68,6 +69,10 @@ export default function HistoryTab({
       format: 'number'
     }
   ]);
+  const [visibleCustomFields, setVisibleCustomFields] = useState<Record<string, boolean>>({
+    accuracy_rate: false,
+    efficiency_index: false
+  });
 
   // Form state for creating a new custom field
   const [newFieldLabel, setNewFieldLabel] = useState('');
@@ -91,9 +96,10 @@ export default function HistoryTab({
     room: true,
     drillCode: true,
     grade: true,
+    cciPerformance: true,
     cciX: true,
     cvr: true,
-    reflectSec: true,
+    reflectSec: false,
     cciResult: true,
     cpdResult: true
   });
@@ -102,7 +108,7 @@ export default function HistoryTab({
   const [showTableColToggle, setShowTableColToggle] = useState(false);
 
   // Sub-tabs state for reports
-  const [subTab, setSubTab] = useState<'cumulative' | 'room-overview' | 'leaderboard'>('room-overview');
+  const [subTab, setSubTab] = useState<'cumulative' | 'room-overview' | 'leaderboard' | 'progress'>('room-overview');
 
   // Date Filter States
   const [startDate, setStartDate] = useState<string>('');
@@ -112,6 +118,7 @@ export default function HistoryTab({
   // Leaderboard Sorting & Configuration States
   const [leaderboardSortBy, setLeaderboardSortBy] = useState<'cpd' | 'redCardRatio' | 'completionRate' | 'totalCount'>('cpd');
   const [leaderboardSortOrder, setLeaderboardSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [leaderboardLineXAxis, setLeaderboardLineXAxis] = useState<'round' | 'cvr' | 'cci'>('round');
   const [showLeaderboardColToggle, setShowLeaderboardColToggle] = useState(false);
   const [visibleLeaderboardColumns, setVisibleLeaderboardColumns] = useState<Record<string, boolean>>({
     rank: true,
@@ -148,46 +155,30 @@ export default function HistoryTab({
     }
   };
 
-  // Extract all learners either from DB or dynamically from responses to ensure thoroughness
+  // Extract all learners from live DB and dynamically include unknown historical response ids.
   const allLearners = useMemo(() => {
-    const dbLearners = sandboxDb.learners || [];
     const responseLearnersMap = new Map<string, string>();
-    
-    // Add known learners from responses
+
     responses.forEach(r => {
-      const dbL = dbLearners.find(l => l.id === r.learner_id);
-      if (dbL) {
-        responseLearnersMap.set(dbL.id, dbL.display_name);
-      } else {
-        responseLearnersMap.set(r.learner_id, `Student (${r.learner_id.substring(0, 5)})`);
-      }
+      const dbL = learners.find(l => l.id === r.learner_id);
+      responseLearnersMap.set(r.learner_id, dbL ? dbL.display_name : `Student (${r.learner_id.substring(0, 5)})`);
     });
 
-    // Merge everything
-    const list: { id: string; display_name: string; source: string; last_seen_at: string | null }[] = [];
-    
-    dbLearners.forEach(l => {
-      list.push({
-        id: l.id,
-        display_name: l.display_name,
-        source: l.source,
-        last_seen_at: l.last_seen_at
-      });
-    });
+    const list: { id: string; display_name: string; source: string; last_seen_at: string | null }[] = learners.map(l => ({
+      id: l.id,
+      display_name: l.display_name,
+      source: l.source,
+      last_seen_at: l.last_seen_at
+    }));
 
     responseLearnersMap.forEach((name, id) => {
       if (!list.some(item => item.id === id)) {
-        list.push({
-          id,
-          display_name: name,
-          source: 'anonymous',
-          last_seen_at: null
-        });
+        list.push({ id, display_name: name, source: 'anonymous', last_seen_at: null });
       }
     });
 
     return list;
-  }, [responses]);
+  }, [learners, responses]);
 
   // Get active room statistics & information
   const selectedRoomDetails = useMemo(() => {
@@ -293,11 +284,13 @@ export default function HistoryTab({
     return Math.round(finalVal * 100) / 100;
   };
 
-  // Aggregated Score Metrics based on active filters
+  // Aggregated Score Metrics based on active filters.
+  // CPD is reported as the highest value achieved, not cumulative sum.
   const aggregates = useMemo(() => {
     const count = filteredHistory.length;
-    const totalCpd = filteredHistory.reduce((acc, curr) => acc + curr.cpd_result, 0);
-    const avgCpd = count > 0 ? (totalCpd / count) : 0;
+    const cpdSum = filteredHistory.reduce((acc, curr) => acc + curr.cpd_result, 0);
+    const maxCpd = count > 0 ? Math.max(...filteredHistory.map(r => r.cpd_result || 0)) : 0;
+    const avgCpd = count > 0 ? (cpdSum / count) : 0;
     const avgReflection = count > 0 ? (filteredHistory.reduce((acc, curr) => acc + curr.reflection_seconds, 0) / count) : 0;
 
     const purples = filteredHistory.filter(r => r.response_color === 'purple').length;
@@ -307,7 +300,7 @@ export default function HistoryTab({
 
     return {
       count,
-      totalCpd: Math.round(totalCpd * 100) / 100,
+      maxCpd: Math.round(maxCpd * 100) / 100,
       avgCpd: Math.round(avgCpd * 100) / 100,
       avgReflection: Math.round(avgReflection * 100) / 100,
       purples,
@@ -335,6 +328,7 @@ export default function HistoryTab({
     };
 
     setCustomFields([...customFields, newField]);
+    setVisibleCustomFields({ ...visibleCustomFields, [fieldId]: true });
     setNewFieldLabel('');
     setShowFieldCreator(false);
   };
@@ -342,13 +336,16 @@ export default function HistoryTab({
   // Remove custom field
   const handleRemoveCustomField = (id: string) => {
     setCustomFields(customFields.filter(f => f.id !== id));
+    const nextVisible = { ...visibleCustomFields };
+    delete nextVisible[id];
+    setVisibleCustomFields(nextVisible);
   };
 
   // --- DYNAMIC DATA AGGREGATION FOR RECHARTS ---
   const chartData = useMemo(() => {
     if (filteredHistory.length === 0) return [];
 
-    const groupings: Record<string, { sumY: number; count: number; name: string }> = {};
+    const groupings: Record<string, { sumY: number; maxY: number; count: number; name: string }> = {};
 
     filteredHistory.forEach(item => {
       let key = 'Other';
@@ -376,9 +373,10 @@ export default function HistoryTab({
       }
 
       if (!groupings[key]) {
-        groupings[key] = { sumY: 0, count: 0, name: key };
+        groupings[key] = { sumY: 0, maxY: 0, count: 0, name: key };
       }
       groupings[key].sumY += yVal;
+      groupings[key].maxY = Math.max(groupings[key].maxY, yVal);
       groupings[key].count += 1;
     });
 
@@ -386,8 +384,10 @@ export default function HistoryTab({
       let finalVal = 0;
       if (yAxisMetric === 'response_count') {
         finalVal = g.count;
+      } else if (yAxisMetric === 'cpd_result') {
+        finalVal = g.maxY;
       } else {
-        finalVal = g.sumY / g.count; // Average
+        finalVal = g.sumY / g.count; // Average for non-CPD metrics
       }
 
       return {
@@ -397,6 +397,29 @@ export default function HistoryTab({
       };
     }).sort((a, b) => b.value - a.value);
   }, [filteredHistory, xAxisField, yAxisMetric]);
+
+  const formatCompactNumber = (value: any) => {
+    const number = Number(value || 0);
+    return Number.isInteger(number) ? String(number) : String(Math.round(number * 10) / 10);
+  };
+
+  const formatRoomChartLabel = (value: any) => {
+    if (roomChartMetric === 'redRatio' || roomChartMetric === 'completion') return `${formatCompactNumber(value)}%`;
+    if (roomChartMetric === 'cpd') return `${formatCompactNumber(value)}V`;
+    return `${formatCompactNumber(value)} câu`;
+  };
+
+  const formatLeaderboardChartLabel = (value: any) => {
+    if (leaderboardSortBy === 'redCardRatio' || leaderboardSortBy === 'completionRate') return `${formatCompactNumber(value)}%`;
+    if (leaderboardSortBy === 'cpd') return `${formatCompactNumber(value)}V`;
+    return formatCompactNumber(value);
+  };
+
+  const formatDynamicChartLabel = (value: any) => {
+    if (yAxisMetric === 'cpd_result') return `${formatCompactNumber(value)}V`;
+    if (yAxisMetric === 'reflection_seconds') return `${formatCompactNumber(value)}s`;
+    return formatCompactNumber(value);
+  };
 
   // Color mapping based on performance grade for cells
   const getGradeColor = (name: string) => {
@@ -415,7 +438,8 @@ export default function HistoryTab({
       id: string;
       display_name: string;
       totalCount: number;
-      totalCpd: number;
+      cpdSum: number;
+      maxCpd: number;
       redCount: number;
       purpleCount: number;
       greenCount: number;
@@ -432,7 +456,8 @@ export default function HistoryTab({
           id: lid,
           display_name: name,
           totalCount: 0,
-          totalCpd: 0,
+          cpdSum: 0,
+          maxCpd: 0,
           redCount: 0,
           purpleCount: 0,
           greenCount: 0,
@@ -441,7 +466,8 @@ export default function HistoryTab({
       }
 
       studentStats[lid].totalCount += 1;
-      studentStats[lid].totalCpd += item.cpd_result;
+      studentStats[lid].cpdSum += item.cpd_result;
+      studentStats[lid].maxCpd = Math.max(studentStats[lid].maxCpd, item.cpd_result || 0);
       if (item.response_color === 'red') {
         studentStats[lid].redCount += 1;
       } else if (item.response_color === 'purple') {
@@ -460,8 +486,10 @@ export default function HistoryTab({
       return {
         ...s,
         redCardRatio,
+        redCardPercent: Math.round(redCardRatio * 100),
         completionRate,
-        avgCpd: s.totalCount > 0 ? s.totalCpd / s.totalCount : 0
+        completionPercent: Math.round(completionRate * 100),
+        avgCpd: s.totalCount > 0 ? s.cpdSum / s.totalCount : 0
       };
     });
 
@@ -469,8 +497,8 @@ export default function HistoryTab({
       let valA = 0;
       let valB = 0;
       if (leaderboardSortBy === 'cpd') {
-        valA = a.totalCpd;
-        valB = b.totalCpd;
+        valA = a.maxCpd;
+        valB = b.maxCpd;
       } else if (leaderboardSortBy === 'redCardRatio') {
         valA = a.redCardRatio;
         valB = b.redCardRatio;
@@ -488,11 +516,151 @@ export default function HistoryTab({
     return list;
   }, [filteredHistory, leaderboardSortBy, leaderboardSortOrder]);
 
+  const leaderboardLineChartData = useMemo(() => {
+    const groups: Record<string, { name: string; order: number; maxCpd: number; responses: number; avgCpd: number; sumCpd: number }> = {};
+
+    filteredHistory.forEach(item => {
+      const roundIndex = item.round?.round_index || 0;
+      const xValue = leaderboardLineXAxis === 'round'
+        ? roundIndex
+        : leaderboardLineXAxis === 'cvr'
+          ? Number(item.cvr_value || 0)
+          : Number(item.cci_standard_x || 0);
+
+      const key = String(xValue || 'N/A');
+      if (!groups[key]) {
+        groups[key] = {
+          name: leaderboardLineXAxis === 'round' ? `R${xValue}` : key,
+          order: Number(xValue) || 0,
+          maxCpd: 0,
+          responses: 0,
+          avgCpd: 0,
+          sumCpd: 0
+        };
+      }
+
+      groups[key].maxCpd = Math.max(groups[key].maxCpd, item.cpd_result || 0);
+      groups[key].sumCpd += item.cpd_result || 0;
+      groups[key].responses += 1;
+    });
+
+    return Object.values(groups)
+      .map(group => ({
+        ...group,
+        maxCpd: Math.round(group.maxCpd * 10) / 10,
+        avgCpd: group.responses > 0 ? Math.round((group.sumCpd / group.responses) * 10) / 10 : 0
+      }))
+      .sort((a, b) => a.order - b.order);
+  }, [filteredHistory, leaderboardLineXAxis]);
+
+  const progressTimelineData = useMemo(() => {
+    return [...filteredHistory]
+      .sort((a, b) => {
+        const roundA = a.round?.round_index || 0;
+        const roundB = b.round?.round_index || 0;
+        if (roundA !== roundB) return roundA - roundB;
+        return new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime();
+      })
+      .map((item, index) => ({
+        name: item.round?.round_index ? `R${item.round.round_index}` : `#${index + 1}`,
+        round: item.round?.round_index || index + 1,
+        learner: item.learner?.display_name || 'Anonymous',
+        cpd: Math.round((item.cpd_result || 0) * 10) / 10,
+        cciPerformance: item.performance_y || 0,
+        cciStandard: item.cci_standard_x || 0,
+        cciResult: item.cci_result || 0,
+        cvr: item.cvr_value || 0,
+        grade: item.response_color,
+        timestamp: item.submitted_at
+      }));
+  }, [filteredHistory]);
+
+  const cvrImpactData = useMemo(() => {
+    const groups: Record<string, { cvr: number; responses: number; maxCpd: number; sumCpd: number; sumPerformance: number; redCount: number }> = {};
+    filteredHistory.forEach(item => {
+      const cvr = Number(item.cvr_value || 0);
+      const key = String(cvr);
+      if (!groups[key]) groups[key] = { cvr, responses: 0, maxCpd: 0, sumCpd: 0, sumPerformance: 0, redCount: 0 };
+      groups[key].responses += 1;
+      groups[key].maxCpd = Math.max(groups[key].maxCpd, item.cpd_result || 0);
+      groups[key].sumCpd += item.cpd_result || 0;
+      groups[key].sumPerformance += item.performance_y || 0;
+      if (item.response_color === 'red') groups[key].redCount += 1;
+    });
+    return Object.values(groups).map(g => ({
+      name: `Ω ${g.cvr}`,
+      cvr: g.cvr,
+      responses: g.responses,
+      maxCpd: Math.round(g.maxCpd * 10) / 10,
+      avgCpd: g.responses ? Math.round((g.sumCpd / g.responses) * 10) / 10 : 0,
+      avgPerformance: g.responses ? Math.round((g.sumPerformance / g.responses) * 100) / 100 : 0,
+      redRate: g.responses ? Math.round((g.redCount / g.responses) * 100) : 0
+    })).sort((a, b) => a.cvr - b.cvr);
+  }, [filteredHistory]);
+
+  const cciImpactData = useMemo(() => {
+    const groups: Record<string, { cci: number; responses: number; maxCpd: number; sumCpd: number; sumPerformance: number; redCount: number }> = {};
+    filteredHistory.forEach(item => {
+      const cci = Number(item.cci_standard_x || 0);
+      const key = String(cci);
+      if (!groups[key]) groups[key] = { cci, responses: 0, maxCpd: 0, sumCpd: 0, sumPerformance: 0, redCount: 0 };
+      groups[key].responses += 1;
+      groups[key].maxCpd = Math.max(groups[key].maxCpd, item.cpd_result || 0);
+      groups[key].sumCpd += item.cpd_result || 0;
+      groups[key].sumPerformance += item.performance_y || 0;
+      if (item.response_color === 'red') groups[key].redCount += 1;
+    });
+    return Object.values(groups).map(g => ({
+      name: `X ${g.cci}`,
+      cci: g.cci,
+      responses: g.responses,
+      maxCpd: Math.round(g.maxCpd * 10) / 10,
+      avgCpd: g.responses ? Math.round((g.sumCpd / g.responses) * 10) / 10 : 0,
+      avgPerformance: g.responses ? Math.round((g.sumPerformance / g.responses) * 100) / 100 : 0,
+      redRate: g.responses ? Math.round((g.redCount / g.responses) * 100) : 0
+    })).sort((a, b) => a.cci - b.cci);
+  }, [filteredHistory]);
+
+  const cvrScatterData = useMemo(() => filteredHistory.map(item => ({
+    x: Number(item.cvr_value || 0),
+    y: Number(item.cpd_result || 0),
+    grade: item.response_color,
+    learner: item.learner?.display_name || 'Anonymous',
+    round: item.round?.round_index || 0,
+    cci: item.cci_standard_x || 0,
+    performance: item.performance_y || 0
+  })), [filteredHistory]);
+
+  const cciScatterData = useMemo(() => filteredHistory.map(item => ({
+    x: Number(item.cci_standard_x || 0),
+    y: Number(item.cpd_result || 0),
+    grade: item.response_color,
+    learner: item.learner?.display_name || 'Anonymous',
+    round: item.round?.round_index || 0,
+    cvr: item.cvr_value || 0,
+    performance: item.performance_y || 0
+  })), [filteredHistory]);
+
+  const roundBucketTrendData = useMemo(() => {
+    const groups: Record<string, { bucket: number; name: string; red: number; yellow: number; green: number; purple: number; maxCpd: number; responses: number }> = {};
+    filteredHistory.forEach(item => {
+      const roundIndex = item.round?.round_index || 1;
+      const bucket = Math.floor((roundIndex - 1) / 10) * 10 + 1;
+      const key = String(bucket);
+      if (!groups[key]) groups[key] = { bucket, name: `${bucket}-${bucket + 9}`, red: 0, yellow: 0, green: 0, purple: 0, maxCpd: 0, responses: 0 };
+      const color = item.response_color as 'red' | 'yellow' | 'green' | 'purple';
+      if (color && groups[key][color] !== undefined) groups[key][color] += 1;
+      groups[key].responses += 1;
+      groups[key].maxCpd = Math.max(groups[key].maxCpd, item.cpd_result || 0);
+    });
+    return Object.values(groups).sort((a, b) => a.bucket - b.bucket);
+  }, [filteredHistory]);
+
   const roomOverviewChartData = useMemo(() => {
     return leaderboardData.map(l => {
       let metricValue = 0;
       if (roomChartMetric === 'cpd') {
-        metricValue = l.totalCpd;
+        metricValue = l.maxCpd;
       } else if (roomChartMetric === 'redRatio') {
         metricValue = Math.round(l.redCardRatio * 100);
       } else if (roomChartMetric === 'completion') {
@@ -619,6 +787,18 @@ export default function HistoryTab({
         >
           <Award className="w-4 h-4 text-red-500" />
           <span>Bảng Xếp Hạng & Thống Kê Room</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('progress')}
+          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+            subTab === 'progress'
+              ? 'border-red-500 text-red-600 font-extrabold bg-red-50/20'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <Activity className="w-4 h-4 text-red-500" />
+          <span>Progress Insights</span>
         </button>
         <button
           type="button"
@@ -768,9 +948,9 @@ export default function HistoryTab({
                 <Award className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase block">Tổng Điểm CPD Đạt Được</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Max CPD Đạt Được</span>
                 <span className="text-xl font-bold text-slate-800 font-mono">
-                  {aggregates.totalCpd} <span className="text-xs text-slate-400 font-normal">Ω</span>
+                  {aggregates.maxCpd} <span className="text-xs text-slate-400 font-normal">V</span>
                 </span>
               </div>
             </div>
@@ -806,7 +986,7 @@ export default function HistoryTab({
               <div>
                 <span className="text-[10px] font-bold text-slate-400 uppercase block">Điểm CPD Trung Bình / Câu</span>
                 <span className="text-xl font-bold text-slate-800 font-mono">
-                  {aggregates.avgCpd} <span className="text-xs text-slate-400 font-normal">Ω</span>
+                  {aggregates.avgCpd} <span className="text-xs text-slate-400 font-normal">V</span>
                 </span>
               </div>
             </div>
@@ -848,7 +1028,7 @@ export default function HistoryTab({
                     onChange={(e) => setRoomChartMetric(e.target.value as any)}
                     className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-none focus:border-red-500 cursor-pointer"
                   >
-                    <option value="cpd">Cộng Dồn Điểm CPD (Ω)</option>
+                    <option value="cpd">Max CPD đạt được (V)</option>
                     <option value="redRatio">Tỷ Lệ Không Đọc Được (Card Đỏ %)</option>
                     <option value="completion">Tỷ Lệ Hoàn Thành Bài (Non-Red %)</option>
                     <option value="submissions">Tổng Số Lượt Trả Lời (Câu)</option>
@@ -880,29 +1060,32 @@ export default function HistoryTab({
                   </div>
                 ) : (
                   <div className="w-full h-72">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
                       {roomChartType === 'bar' ? (
-                        <BarChart data={roomOverviewChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                        <BarChart data={roomOverviewChartData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                           <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                           <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                           <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
                           <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]}>
+                            <LabelList dataKey="value" position="top" formatter={formatRoomChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
                             {roomOverviewChartData.map((entry, idx) => (
                               <Cell key={`cell-${idx}`} fill={roomChartMetric === 'redRatio' ? '#ef4444' : roomChartMetric === 'completion' ? '#22c55e' : '#3b82f6'} />
                             ))}
                           </Bar>
                         </BarChart>
                       ) : roomChartType === 'line' ? (
-                        <LineChart data={roomOverviewChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                        <LineChart data={roomOverviewChartData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                           <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                           <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                           <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
-                          <Line type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={2.5} activeDot={{ r: 6 }} />
+                          <Line type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={2.5} activeDot={{ r: 6 }}>
+                            <LabelList dataKey="value" position="top" formatter={formatRoomChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
+                          </Line>
                         </LineChart>
                       ) : (
-                        <AreaChart data={roomOverviewChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                        <AreaChart data={roomOverviewChartData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                           <defs>
                             <linearGradient id="colorAreaRoom" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
@@ -913,7 +1096,9 @@ export default function HistoryTab({
                           <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                           <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                           <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
-                          <Area type="monotone" dataKey="value" stroke="#ef4444" fillOpacity={1} fill="url(#colorAreaRoom)" strokeWidth={2} />
+                          <Area type="monotone" dataKey="value" stroke="#ef4444" fillOpacity={1} fill="url(#colorAreaRoom)" strokeWidth={2}>
+                            <LabelList dataKey="value" position="top" formatter={formatRoomChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
+                          </Area>
                         </AreaChart>
                       )}
                     </ResponsiveContainer>
@@ -1052,7 +1237,7 @@ export default function HistoryTab({
                     onChange={() => setVisibleLeaderboardColumns({ ...visibleLeaderboardColumns, totalCpd: !visibleLeaderboardColumns.totalCpd })}
                     className="rounded text-red-500 focus:ring-red-500 accent-red-500 h-3.5 w-3.5 cursor-pointer"
                   />
-                  <span>Tích lũy CPD</span>
+                  <span>Max CPD</span>
                 </label>
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
                   <input
@@ -1096,7 +1281,7 @@ export default function HistoryTab({
                       {visibleLeaderboardColumns.rank && <th className="py-2.5 text-center w-12">HẠNG</th>}
                       {visibleLeaderboardColumns.learner && <th className="py-2.5">HỌC VIÊN</th>}
                       {visibleLeaderboardColumns.totalResponses && <th className="py-2.5 text-center">TỔNG PHẢN HỒI</th>}
-                      {visibleLeaderboardColumns.totalCpd && <th className="py-2.5 text-right">TÍCH LŨY CPD</th>}
+                      {visibleLeaderboardColumns.totalCpd && <th className="py-2.5 text-right">MAX CPD (V)</th>}
                       {visibleLeaderboardColumns.redRatio && <th className="py-2.5 text-center text-red-500">TỶ LỆ KHÔNG ĐỌC ĐƯỢC (CARD ĐỎ / TỔNG)</th>}
                       {visibleLeaderboardColumns.completionRate && <th className="py-2.5 text-center text-green-600">TỶ LỆ HOÀN THÀNH (NON-RED / TỔNG)</th>}
                       {visibleLeaderboardColumns.gradesDistribution && <th className="py-2.5 text-center">CHI TIẾT PHÂN BỔ GRADES</th>}
@@ -1135,7 +1320,7 @@ export default function HistoryTab({
                             <td className="py-3 text-center font-mono text-slate-600">{student.totalCount} câu</td>
                           )}
                           {visibleLeaderboardColumns.totalCpd && (
-                            <td className="py-3 text-right font-mono font-bold text-slate-900">{Math.round(student.totalCpd * 10) / 10} Ω</td>
+                            <td className="py-3 text-right font-mono font-bold text-slate-900">{Math.round(student.maxCpd * 10) / 10} V</td>
                           )}
                           {visibleLeaderboardColumns.redRatio && (
                             <td className="py-3 text-center font-mono">
@@ -1187,24 +1372,339 @@ export default function HistoryTab({
             </div>
 
             {leaderboardData.length > 0 && (
-              <div className="w-full h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={leaderboardData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="display_name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                    <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
-                    <Bar dataKey={leaderboardSortBy === 'cpd' ? 'totalCpd' : leaderboardSortBy === 'redCardRatio' ? 'redCount' : leaderboardSortBy === 'completionRate' ? 'completionRate' : 'totalCount'} fill="#ef4444" radius={[4, 4, 0, 0]}>
-                      {leaderboardData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={index === 0 ? '#fbbf24' : index === 1 ? '#cbd5e1' : index === 2 ? '#b45309' : '#3b82f6'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="space-y-6">
+                <div className="w-full h-80">
+                  <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                    <BarChart data={leaderboardData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="display_name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                      <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+                      <Bar dataKey={leaderboardSortBy === 'cpd' ? 'maxCpd' : leaderboardSortBy === 'redCardRatio' ? 'redCardPercent' : leaderboardSortBy === 'completionRate' ? 'completionPercent' : 'totalCount'} fill="#ef4444" radius={[4, 4, 0, 0]}>
+                        <LabelList dataKey={leaderboardSortBy === 'cpd' ? 'maxCpd' : leaderboardSortBy === 'redCardRatio' ? 'redCardPercent' : leaderboardSortBy === 'completionRate' ? 'completionPercent' : 'totalCount'} position="top" formatter={formatLeaderboardChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
+                        {leaderboardData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={index === 0 ? '#fbbf24' : index === 1 ? '#cbd5e1' : index === 2 ? '#b45309' : '#3b82f6'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="border-t border-slate-100 pt-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                        <Activity className="w-4 h-4 text-indigo-600" />
+                        Line Chart: CPD đạt được theo Round / CVR / CCI
+                      </h5>
+                      <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                        Y = Max CPD (V). Tooltip hiển thị thêm số lượt response tại điểm đó.
+                      </p>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                      Trục X:
+                      <select
+                        value={leaderboardLineXAxis}
+                        onChange={(e) => setLeaderboardLineXAxis(e.target.value as any)}
+                        className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 cursor-pointer shadow-3xs"
+                      >
+                        <option value="round">Round #</option>
+                        <option value="cvr">CVR Ω</option>
+                        <option value="cci">CCI Standard X</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <LineChart data={leaderboardLineChartData} margin={{ top: 28, right: 18, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <Tooltip
+                          content={({ active, payload, label }: any) => {
+                            if (!active || !payload?.length) return null;
+                            const row = payload[0].payload;
+                            return (
+                              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] shadow-sm">
+                                <div className="font-bold text-slate-800 mb-1">{label}</div>
+                                <div className="text-indigo-700 font-mono font-bold">Max CPD: {formatCompactNumber(row.maxCpd)}V</div>
+                                <div className="text-slate-500 font-mono">Responses: {row.responses}</div>
+                                <div className="text-slate-500 font-mono">Avg CPD: {formatCompactNumber(row.avgCpd)}V</div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Line type="monotone" dataKey="maxCpd" name="Max CPD (V)" stroke="#4f46e5" strokeWidth={2.75} dot={{ r: 3 }} activeDot={{ r: 6 }}>
+                          <LabelList dataKey="maxCpd" position="top" formatter={(value: any) => `${formatCompactNumber(value)}V`} style={{ fill: '#312e81', fontSize: 10, fontWeight: 800 }} />
+                        </Line>
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
+        </div>
+      )}
+
+      {subTab === 'progress' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-5 shadow-xs">
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="p-2 bg-red-500/15 text-red-300 rounded-xl border border-red-500/20">
+                    <Activity className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h3 className="font-sans font-black text-lg leading-tight">Progress Insights — Learning Behavior Analytics</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Dùng bộ lọc hiện tại theo Session / Learner / Date để xem tiến bộ theo thời gian.</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-4 text-[11px] text-slate-300">
+                  <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                    <span className="block text-slate-500 font-bold uppercase text-[9px] mb-1">Câu hỏi chính #1</span>
+                    Khi CVR Ω tăng/giảm, CPD V có tăng đều hay bị tụt vì áp lực độ khó?
+                  </div>
+                  <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                    <span className="block text-slate-500 font-bold uppercase text-[9px] mb-1">Câu hỏi chính #2</span>
+                    Khi CCI Standard X thay đổi, CCI Performance Y của học viên phản ứng như thế nào?
+                  </div>
+                  <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                    <span className="block text-slate-500 font-bold uppercase text-[9px] mb-1">Câu hỏi chính #3</span>
+                    Theo thời gian/round, learner đang ổn định, tiến bộ, hay dao động thất thường?
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 min-w-[260px] font-mono">
+                <div className="bg-slate-950/70 border border-slate-800 px-3 py-2 rounded-xl">
+                  <span className="text-[9px] text-slate-500 uppercase font-bold block">Responses</span>
+                  <span className="text-lg font-black text-white">{filteredHistory.length}</span>
+                </div>
+                <div className="bg-slate-950/70 border border-slate-800 px-3 py-2 rounded-xl">
+                  <span className="text-[9px] text-slate-500 uppercase font-bold block">Max CPD</span>
+                  <span className="text-lg font-black text-red-300">{aggregates.maxCpd}V</span>
+                </div>
+                <div className="bg-slate-950/70 border border-slate-800 px-3 py-2 rounded-xl">
+                  <span className="text-[9px] text-slate-500 uppercase font-bold block">Avg CPD</span>
+                  <span className="text-lg font-black text-indigo-300">{aggregates.avgCpd}V</span>
+                </div>
+                <div className="bg-slate-950/70 border border-slate-800 px-3 py-2 rounded-xl">
+                  <span className="text-[9px] text-slate-500 uppercase font-bold block">Avg Reflect</span>
+                  <span className="text-lg font-black text-emerald-300">{aggregates.avgReflection}s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {filteredHistory.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center text-sm text-slate-400 italic">
+              Chưa có response nào trong bộ lọc hiện tại để vẽ Progress Insights.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 xl:col-span-2">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                        <Activity className="w-4 h-4 text-red-600" />
+                        Timeline: CPD / CVR / CCI Standard / CCI Performance theo Round
+                      </h4>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Dùng tốt nhất khi chọn 1 learner hoặc 1 session. Nếu chọn All, chart phản ánh toàn bộ response theo thứ tự round.</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Multi-metric trend</span>
+                  </div>
+                  <div className="w-full h-80">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <LineChart data={progressTimelineData} margin={{ top: 28, right: 20, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis yAxisId="left" tick={{ fontSize: 9 }} stroke="#ef4444" />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} stroke="#64748b" />
+                        <Tooltip
+                          content={({ active, payload, label }: any) => {
+                            if (!active || !payload?.length) return null;
+                            const row = payload[0].payload;
+                            return (
+                              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] shadow-sm">
+                                <div className="font-black text-slate-800 mb-1">{label} • {row.learner}</div>
+                                <div className="font-mono text-red-600 font-bold">CPD: {formatCompactNumber(row.cpd)}V</div>
+                                <div className="font-mono text-indigo-600">CCI Performance Y: {row.cciPerformance}</div>
+                                <div className="font-mono text-slate-600">CCI Standard X: {row.cciStandard}</div>
+                                <div className="font-mono text-emerald-600">CVR: {row.cvr}Ω</div>
+                                <div className="font-mono text-slate-400 capitalize">Grade: {row.grade}</div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Line yAxisId="left" type="monotone" dataKey="cpd" name="CPD Result (V)" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 2 }} activeDot={{ r: 5 }} />
+                        <Line yAxisId="right" type="monotone" dataKey="cvr" name="CVR Ω" stroke="#10b981" strokeWidth={2} dot={false} />
+                        <Line yAxisId="right" type="monotone" dataKey="cciStandard" name="CCI Standard X" stroke="#64748b" strokeWidth={2} dot={false} />
+                        <Line yAxisId="right" type="monotone" dataKey="cciPerformance" name="CCI Performance Y" stroke="#4f46e5" strokeWidth={2} dot={{ r: 2 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+                  <div className="pb-3 border-b border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                      <BarChart2 className="w-4 h-4 text-emerald-600" />
+                      CVR Impact: Ω tăng thì CPD / Performance đổi ra sao?
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Nhóm theo từng mức CVR. Bar đỏ = Max CPD, xanh = Avg Performance Y.</p>
+                  </div>
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <BarChart data={cvrImpactData} margin={{ top: 28, right: 14, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis yAxisId="left" tick={{ fontSize: 9 }} stroke="#ef4444" />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} stroke="#10b981" />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Bar yAxisId="left" dataKey="maxCpd" name="Max CPD (V)" fill="#ef4444" radius={[4, 4, 0, 0]}>
+                          <LabelList dataKey="maxCpd" position="top" formatter={(value: any) => `${formatCompactNumber(value)}V`} style={{ fill: '#991b1b', fontSize: 10, fontWeight: 800 }} />
+                        </Bar>
+                        <Bar yAxisId="right" dataKey="avgPerformance" name="Avg CCI Performance Y" fill="#10b981" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+                  <div className="pb-3 border-b border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                      <BarChart3 className="w-4 h-4 text-indigo-600" />
+                      CCI Standard Impact: X thay đổi thì Y và CPD đổi ra sao?
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Nhóm theo từng CCI Standard X. So sánh độ khó tiêu chuẩn với kết quả learner.</p>
+                  </div>
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <BarChart data={cciImpactData} margin={{ top: 28, right: 14, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis yAxisId="left" tick={{ fontSize: 9 }} stroke="#4f46e5" />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} stroke="#f59e0b" />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Bar yAxisId="left" dataKey="maxCpd" name="Max CPD (V)" fill="#4f46e5" radius={[4, 4, 0, 0]}>
+                          <LabelList dataKey="maxCpd" position="top" formatter={(value: any) => `${formatCompactNumber(value)}V`} style={{ fill: '#312e81', fontSize: 10, fontWeight: 800 }} />
+                        </Bar>
+                        <Bar yAxisId="right" dataKey="avgPerformance" name="Avg CCI Performance Y" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+                  <div className="pb-3 border-b border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                      <PieChart className="w-4 h-4 text-emerald-600" />
+                      Scatter: CVR Ω vs CPD V
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Mỗi chấm = 1 response. Màu chấm là grade: red/yellow/green/purple.</p>
+                  </div>
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <ScatterChart margin={{ top: 18, right: 18, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis type="number" dataKey="x" name="CVR" unit="Ω" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis type="number" dataKey="y" name="CPD" unit="V" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+                        <Scatter name="Responses" data={cvrScatterData}>
+                          {cvrScatterData.map((entry, index) => (
+                            <Cell key={`cvr-dot-${index}`} fill={getGradeColor(entry.grade || 'red')} />
+                          ))}
+                        </Scatter>
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+                  <div className="pb-3 border-b border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-600" />
+                      Scatter: CCI Standard X vs CPD V
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Quan sát điểm khó X nào tạo CPD cao hoặc khiến learner rơi grade đỏ.</p>
+                  </div>
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <ScatterChart margin={{ top: 18, right: 18, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis type="number" dataKey="x" name="CCI X" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis type="number" dataKey="y" name="CPD" unit="V" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+                        <Scatter name="Responses" data={cciScatterData}>
+                          {cciScatterData.map((entry, index) => (
+                            <Cell key={`cci-dot-${index}`} fill={getGradeColor(entry.grade || 'red')} />
+                          ))}
+                        </Scatter>
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 xl:col-span-2">
+                  <div className="pb-3 border-b border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                      <ListCollapse className="w-4 h-4 text-red-600" />
+                      Grade Distribution theo cụm 10 rounds
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Stacked bar giúp nhìn nhanh học viên có chuyển từ Red/Yellow sang Green/Purple qua thời gian không.</p>
+                  </div>
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <BarChart data={roundBucketTrendData} margin={{ top: 28, right: 16, left: -18, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Bar dataKey="red" stackId="grade" name="Red" fill="#ef4444" />
+                        <Bar dataKey="yellow" stackId="grade" name="Yellow" fill="#eab308" />
+                        <Bar dataKey="green" stackId="grade" name="Green" fill="#22c55e" />
+                        <Bar dataKey="purple" stackId="grade" name="Purple" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                  <HelpCircle className="w-5 h-5 text-red-600" />
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">Chart đề xuất thêm từ dữ liệu hiện có</h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-[11px] text-slate-600 leading-relaxed">
+                  {[
+                    'Learning Curve: CPD theo thời gian/round cho từng learner.',
+                    'Difficulty Response: CVR Ω vs CPD V để tìm ngưỡng độ khó làm tụt điểm.',
+                    'CCI Calibration: CCI Standard X vs CCI Performance Y để xem tiêu chuẩn có quá dễ/quá khó.',
+                    'Grade Migration: Red → Yellow → Green → Purple theo cụm round.',
+                    'Consistency Chart: độ dao động CPD giữa các round của cùng learner.',
+                    'Risk Chart: red-rate theo CVR/CCI để phát hiện mức khó gây lỗi cao.',
+                    'Speed vs Score: reflection seconds vs CPD để xem nhanh có tốt hơn hay chỉ vội.',
+                    'Session Comparison: cùng learner qua nhiều room/session có cải thiện không.',
+                    'Leaderboard Trend: rank thay đổi qua time/session thay vì chỉ rank cuối.'
+                  ].map(item => (
+                    <div key={item} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500 mt-1.5 shrink-0" />
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1254,7 +1754,7 @@ export default function HistoryTab({
                     {selectedRoomDetails.participatingLearners.map(l => {
                       const isActive = selectedLearnerId === l.id;
                       const personalRoomResponses = filteredHistory.filter(item => item.learner_id === l.id);
-                      const studentRoomCpd = personalRoomResponses.reduce((acc, curr) => acc + curr.cpd_result, 0);
+                      const studentRoomCpd = personalRoomResponses.length > 0 ? Math.max(...personalRoomResponses.map(curr => curr.cpd_result || 0)) : 0;
 
                       return (
                         <button
@@ -1269,7 +1769,7 @@ export default function HistoryTab({
                           <span className="text-xs font-bold block truncate">{l.display_name}</span>
                           <div className="flex justify-between items-center mt-1 text-[10px] font-mono opacity-85">
                             <span>{personalRoomResponses.length} rounds</span>
-                            <span className="font-bold">{Math.round(studentRoomCpd * 10) / 10} Ω</span>
+                            <span className="font-bold">{Math.round(studentRoomCpd * 10) / 10} V max</span>
                           </div>
                         </button>
                       );
@@ -1288,9 +1788,9 @@ export default function HistoryTab({
             <Award className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase block">Filtered Cumulative CPD</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase block">Filtered Max CPD</span>
             <span className="text-xl font-bold text-slate-800 font-mono">
-              {aggregates.totalCpd} <span className="text-xs text-slate-400 font-normal">Ω</span>
+              {aggregates.maxCpd} <span className="text-xs text-slate-400 font-normal">V</span>
             </span>
           </div>
         </div>
@@ -1326,7 +1826,7 @@ export default function HistoryTab({
           <div>
             <span className="text-[10px] font-bold text-slate-400 uppercase block">Filtered Avg CPD Score</span>
             <span className="text-xl font-bold text-slate-800 font-mono">
-              {aggregates.avgCpd} <span className="text-xs text-slate-400 font-normal">Ω / rnd</span>
+              {aggregates.avgCpd} <span className="text-xs text-slate-400 font-normal">V / rnd</span>
             </span>
           </div>
         </div>
@@ -1388,7 +1888,7 @@ export default function HistoryTab({
                 onChange={(e) => setYAxisMetric(e.target.value as any)}
                 className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-hidden focus:border-red-500 cursor-pointer"
               >
-                <option value="cpd_result">Average CPD Score (Ω Units)</option>
+                <option value="cpd_result">Max CPD Score (V)</option>
                 <option value="cci_result">Average CCI Benchmark Score (Accuracy)</option>
                 <option value="reflection_seconds">Average Spoken Reflection Delay (Seconds)</option>
                 <option value="response_count">Total responses count (Volume)</option>
@@ -1421,9 +1921,9 @@ export default function HistoryTab({
               </div>
             ) : (
               <div className="w-full h-72">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
                   {chartType === 'bar' ? (
-                    <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <BarChart data={chartData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                       <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
@@ -1431,21 +1931,24 @@ export default function HistoryTab({
                         contentStyle={{ fontSize: 11, borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}
                       />
                       <Bar dataKey="value" fill="#ef4444" radius={[4, 4, 0, 0]}>
+                        <LabelList dataKey="value" position="top" formatter={formatDynamicChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
                         {xAxisField === 'response_color' && chartData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={getGradeColor(entry.name)} />
                         ))}
                       </Bar>
                     </BarChart>
                   ) : chartType === 'line' ? (
-                    <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <LineChart data={chartData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
-                      <Line type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={2.5} activeDot={{ r: 6 }} />
+                      <Line type="monotone" dataKey="value" stroke="#ef4444" strokeWidth={2.5} activeDot={{ r: 6 }}>
+                        <LabelList dataKey="value" position="top" formatter={formatDynamicChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
+                      </Line>
                     </LineChart>
                   ) : chartType === 'area' ? (
-                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <AreaChart data={chartData} margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                       <defs>
                         <linearGradient id="colorArea" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
@@ -1456,15 +1959,19 @@ export default function HistoryTab({
                       <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
-                      <Area type="monotone" dataKey="value" stroke="#ef4444" fillOpacity={1} fill="url(#colorArea)" strokeWidth={2} />
+                      <Area type="monotone" dataKey="value" stroke="#ef4444" fillOpacity={1} fill="url(#colorArea)" strokeWidth={2}>
+                        <LabelList dataKey="value" position="top" formatter={formatDynamicChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
+                      </Area>
                     </AreaChart>
                   ) : (
-                    <ScatterChart margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <ScatterChart margin={{ top: 28, right: 10, left: -20, bottom: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <YAxis dataKey="value" tick={{ fontSize: 9 }} stroke="#94a3b8" />
                       <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
-                      <Scatter name="Telemetry Points" data={chartData} fill="#ef4444" />
+                      <Scatter name="Telemetry Points" data={chartData} fill="#ef4444">
+                        <LabelList dataKey="value" position="top" formatter={formatDynamicChartLabel} style={{ fill: '#0f172a', fontSize: 10, fontWeight: 800 }} />
+                      </Scatter>
                     </ScatterChart>
                   )}
                 </ResponsiveContainer>
@@ -1668,18 +2175,42 @@ export default function HistoryTab({
 
         {/* COLUMN TOGGLES PANEL */}
         {showConfigPanel && (
-          <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3.5 animate-in slide-in-from-top-1 duration-150">
-            {Object.keys(visibleColumns).map(col => (
-              <label key={col} className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleColumns[col]}
-                  onChange={() => setVisibleColumns({ ...visibleColumns, [col]: !visibleColumns[col] })}
-                  className="rounded text-red-500 focus:ring-red-500 accent-red-500 h-3.5 w-3.5"
-                />
-                <span className="capitalize">{col.replace(/([A-Z])/g, ' $1').trim()}</span>
-              </label>
-            ))}
+          <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl mt-4 space-y-4 animate-in slide-in-from-top-1 duration-150">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Base Columns</span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3.5">
+                {Object.keys(visibleColumns).map(col => (
+                  <label key={col} className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns[col]}
+                      onChange={() => setVisibleColumns({ ...visibleColumns, [col]: !visibleColumns[col] })}
+                      className="rounded text-red-500 focus:ring-red-500 accent-red-500 h-3.5 w-3.5"
+                    />
+                    <span className="capitalize">{col.replace(/([A-Z])/g, ' $1').trim()}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {customFields.length > 0 && (
+              <div className="border-t border-slate-200 pt-3">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Formula / Custom Columns</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                  {customFields.map(field => (
+                    <label key={field.id} className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!!visibleCustomFields[field.id]}
+                        onChange={() => setVisibleCustomFields({ ...visibleCustomFields, [field.id]: !visibleCustomFields[field.id] })}
+                        className="rounded text-indigo-500 focus:ring-indigo-500 accent-indigo-500 h-3.5 w-3.5"
+                      />
+                      <span>{field.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1693,8 +2224,7 @@ export default function HistoryTab({
             if (!student) return null;
 
             const totalStudentResponses = filteredHistory.length;
-            const studentCpdRecord = progress.find(p => p.learner_id === student.id);
-            const overallCumulativeCpd = studentCpdRecord ? studentCpdRecord.total_cpd : aggregates.totalCpd;
+            const overallMaxCpd = aggregates.maxCpd;
 
             // Accurate breakdown of grades specifically for this filtered view
             const percentPurple = totalStudentResponses > 0 ? Math.round((aggregates.purples / totalStudentResponses) * 100) : 0;
@@ -1727,8 +2257,8 @@ export default function HistoryTab({
                     
                     <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 space-y-3.5">
                       <div className="flex justify-between items-center">
-                        <span className="text-xs text-slate-500">Cumulative CPD Earned:</span>
-                        <span className="text-sm font-bold text-red-600 font-mono">{overallCumulativeCpd} Ω</span>
+                        <span className="text-xs text-slate-500">Max CPD Achieved:</span>
+                        <span className="text-sm font-bold text-red-600 font-mono">{overallMaxCpd} V</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-xs text-slate-500">Spoken Evaluation Rounds:</span>
@@ -1740,7 +2270,7 @@ export default function HistoryTab({
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-xs text-slate-500">Average Score / Round:</span>
-                        <span className="text-sm font-bold text-emerald-600 font-mono">{aggregates.avgCpd} Ω</span>
+                        <span className="text-sm font-bold text-emerald-600 font-mono">{aggregates.avgCpd} V</span>
                       </div>
                     </div>
 
@@ -1882,6 +2412,18 @@ export default function HistoryTab({
                           <span className="capitalize">{col.replace(/([A-Z])/g, ' $1').trim()}</span>
                         </label>
                       ))}
+                      {customFields.length > 0 && <div className="border-t border-slate-100 my-1" />}
+                      {customFields.map(field => (
+                        <label key={field.id} className="flex items-center gap-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={!!visibleCustomFields[field.id]}
+                            onChange={() => setVisibleCustomFields({ ...visibleCustomFields, [field.id]: !visibleCustomFields[field.id] })}
+                            className="rounded text-indigo-500 focus:ring-indigo-500 accent-indigo-500 h-3.5 w-3.5 cursor-pointer"
+                          />
+                          <span>{field.label}</span>
+                        </label>
+                      ))}
                     </div>
                     <div className="border-t border-slate-100 pt-1.5 flex justify-end">
                       <button
@@ -1910,9 +2452,10 @@ export default function HistoryTab({
                 room: true,
                 drillCode: true,
                 grade: true,
+                cciPerformance: false,
                 cciX: false,
                 cvr: false,
-                reflectSec: true,
+                reflectSec: false,
                 cciResult: false,
                 cpdResult: true
               })}
@@ -1928,6 +2471,7 @@ export default function HistoryTab({
                 room: true,
                 drillCode: true,
                 grade: true,
+                cciPerformance: true,
                 cciX: true,
                 cvr: true,
                 reflectSec: true,
@@ -1938,6 +2482,16 @@ export default function HistoryTab({
             >
               Full Telemetry
             </button>
+          </div>
+        </div>
+
+        <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3 text-[11px] text-indigo-900 leading-relaxed">
+          <strong className="block mb-1">Formula quick guide</strong>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+            <span><b>CCI Performance (Y):</b> Red=0, Yellow=1, Green=2, Purple=3</span>
+            <span><b>CCI Result:</b> CCI Performance (Y) × CCI Standard (X)</span>
+            <span><b>CPD Result (V):</b> CCI Result × CVR Ω</span>
+            <span><b>Hidden optional:</b> Reflect Sec, Accuracy Rate %, CPD per Second can be enabled in column settings.</span>
           </div>
         </div>
 
@@ -1954,20 +2508,21 @@ export default function HistoryTab({
                   {visibleColumns.student && <th className="py-2.5">STUDENT</th>}
                   {visibleColumns.room && <th className="py-2.5">ROOM / SESSION</th>}
                   {visibleColumns.drillCode && <th className="py-2.5">DRILL</th>}
-                  {visibleColumns.grade && <th className="py-2.5">GRADE COLOR</th>}
-                  {visibleColumns.cciX && <th className="py-2.5">CCI STD X</th>}
-                  {visibleColumns.cvr && <th className="py-2.5">CVR Ω</th>}
-                  {visibleColumns.reflectSec && <th className="py-2.5">REFLECT SEC</th>}
-                  {visibleColumns.cciResult && <th className="py-2.5">CCI RESULT</th>}
+                  {visibleColumns.grade && <th className="py-2.5" title="Grade color maps to CCI Performance Y: Red=0, Yellow=1, Green=2, Purple=3">GRADE COLOR</th>}
+                  {visibleColumns.cciPerformance && <th className="py-2.5" title="CCI Performance Y mapped from grade color. Red=0, Yellow=1, Green=2, Purple=3">CCI PERF Y</th>}
+                  {visibleColumns.cciX && <th className="py-2.5" title="CCI Standard X selected for this round">CCI STD X</th>}
+                  {visibleColumns.cvr && <th className="py-2.5" title="CVR multiplier Ω for this resource/round">CVR Ω</th>}
+                  {visibleColumns.reflectSec && <th className="py-2.5" title="Optional hidden column: reflection_time_ms / 1000">REFLECT SEC</th>}
+                  {visibleColumns.cciResult && <th className="py-2.5" title="CCI Result = CCI Performance (Y) × CCI Standard (X)">CCI RESULT</th>}
                   
                   {/* DYNAMIC CUSTOM FIELDS COLUMNS */}
-                  {customFields.map(field => (
-                    <th key={field.id} className="py-2.5 text-indigo-600 font-bold font-mono">
+                  {customFields.filter(field => visibleCustomFields[field.id]).map(field => (
+                    <th key={field.id} className="py-2.5 text-indigo-600 font-bold font-mono" title={`${field.label}: ${field.varA} ${field.operator} ${typeof field.varB === 'number' ? field.varB : field.varB}`}>
                       {field.label.toUpperCase()}
                     </th>
                   ))}
 
-                  {visibleColumns.cpdResult && <th className="py-2.5 text-right text-red-600 font-bold">CPD RESULT</th>}
+                  {visibleColumns.cpdResult && <th className="py-2.5 text-right text-red-600 font-bold" title="CPD Result (V) = CCI Result × CVR Ω">CPD RESULT (V)</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 font-medium">
@@ -2010,8 +2565,14 @@ export default function HistoryTab({
                       </td>
                     )}
 
+                    {visibleColumns.cciPerformance && (
+                      <td className="py-3 font-mono text-slate-600" title="CCI Performance Y from grade color">
+                        {audit.performance_y}
+                      </td>
+                    )}
+
                     {visibleColumns.cciX && (
-                      <td className="py-3 font-mono text-slate-600">{audit.cci_standard_x}</td>
+                      <td className="py-3 font-mono text-slate-600" title="CCI Standard X">{audit.cci_standard_x}</td>
                     )}
 
                     {visibleColumns.cvr && (
@@ -2023,19 +2584,21 @@ export default function HistoryTab({
                     )}
 
                     {visibleColumns.cciResult && (
-                      <td className="py-3 font-mono text-indigo-700 font-bold">{audit.cci_result} A</td>
+                      <td className="py-3 font-mono text-indigo-700 font-bold" title={`${audit.performance_y} × ${audit.cci_standard_x} = ${audit.cci_result}`}>
+                        {audit.cci_result} A
+                      </td>
                     )}
 
                     {/* DYNAMIC CALCULATED CUSTOM FIELDS DATA RENDERING */}
-                    {customFields.map(field => (
-                      <td key={field.id} className="py-3 font-mono text-indigo-600 font-bold">
+                    {customFields.filter(field => visibleCustomFields[field.id]).map(field => (
+                      <td key={field.id} className="py-3 font-mono text-indigo-600 font-bold" title={`${field.varA} ${field.operator} ${typeof field.varB === 'number' ? field.varB : field.varB}`}>
                         {evalCustomField(audit, field)}
                       </td>
                     ))}
 
                     {visibleColumns.cpdResult && (
-                      <td className="py-3 text-right font-mono font-bold text-red-600">
-                        {audit.cpd_result}
+                      <td className="py-3 text-right font-mono font-bold text-red-600" title={`${audit.cci_result} × ${audit.cvr_value} = ${audit.cpd_result}V`}>
+                        {audit.cpd_result} V
                       </td>
                     )}
 

@@ -5,16 +5,42 @@
 
 import React, { useState, useEffect } from 'react';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
-import { CCIStandardCard, CVRUnit, CCIPerformanceParameter } from '../types';
+import { CCIStandardCard, CVRUnit, CCIPerformanceParameter, Learner } from '../types';
+import { REQUESTED_LEARNER_NAMES, findDuplicateLearnerNames, getMissingRequestedLearners, normalizeLearnerName } from '../lib/liveData';
 import { 
   Sliders, Edit2, Trash2, Plus, Settings2, SlidersHorizontal, 
-  Sparkles, CheckCircle2, Smartphone, Eye, Info, ChevronRight, RotateCcw, AlertCircle
+  Sparkles, CheckCircle2, Smartphone, Eye, Info, ChevronRight, RotateCcw, AlertCircle, Users,
+  CheckSquare, Square, MinusSquare
 } from 'lucide-react';
+
+type LearnerUiSettings = {
+  showSummaryCard: boolean;
+  summaryTitle: string;
+  showColorCounts: boolean;
+  showHighestCpd: boolean;
+};
+
+const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
+  showSummaryCard: true,
+  summaryTitle: 'My Session Summary',
+  showColorCounts: true,
+  showHighestCpd: true
+};
+
+function readLearnerUiSettings(): LearnerUiSettings {
+  try {
+    const raw = localStorage.getItem('chunks_learner_ui_settings');
+    return raw ? { ...DEFAULT_LEARNER_UI_SETTINGS, ...JSON.parse(raw) } : DEFAULT_LEARNER_UI_SETTINGS;
+  } catch {
+    return DEFAULT_LEARNER_UI_SETTINGS;
+  }
+}
 
 interface SettingsTabProps {
   useSandbox: boolean;
   cciCards: CCIStandardCard[];
   cvrUnits: CVRUnit[];
+  learners: Learner[];
   onRefreshData: () => void;
 }
 
@@ -22,10 +48,274 @@ export default function SettingsTab({
   useSandbox,
   cciCards,
   cvrUnits,
+  learners,
   onRefreshData
 }: SettingsTabProps) {
   // Tab within settings
-  const [activeSettingsSubtab, setActiveSettingsSubtab] = useState<'cci_cvr' | 'performance_y'>('performance_y');
+  const [activeSettingsSubtab, setActiveSettingsSubtab] = useState<'learners' | 'cci_cvr' | 'performance_y'>('learners');
+
+  // --- Learner Roster State ---
+  const [newLearnerName, setNewLearnerName] = useState('');
+  const [editingLearnerId, setEditingLearnerId] = useState<string | null>(null);
+  const [editLearnerName, setEditLearnerName] = useState('');
+  const [learnerStatus, setLearnerStatus] = useState('');
+  const [selectedLearnerIds, setSelectedLearnerIds] = useState<string[]>([]);
+  const visibleLearners = learners.filter(l => !l.display_name.toLowerCase().startsWith('[archived]'));
+  const archivedLearners = learners.filter(l => l.display_name.toLowerCase().startsWith('[archived]'));
+  const learnerDuplicateNames = findDuplicateLearnerNames(visibleLearners);
+  const missingRequestedLearners = getMissingRequestedLearners(visibleLearners);
+  const selectedVisibleLearners = visibleLearners.filter(l => selectedLearnerIds.includes(l.id));
+  const allVisibleLearnersSelected = visibleLearners.length > 0 && selectedVisibleLearners.length === visibleLearners.length;
+  const hasPartialLearnerSelection = selectedVisibleLearners.length > 0 && !allVisibleLearnersSelected;
+
+  useEffect(() => {
+    const visibleIds = new Set(
+      learners
+        .filter(l => !l.display_name.toLowerCase().startsWith('[archived]'))
+        .map(l => l.id)
+    );
+    setSelectedLearnerIds(current => {
+      const next = current.filter(id => visibleIds.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [learners]);
+
+  const learnerHasHistory = async (learnerId: string) => {
+    const [{ data: memberships }, { data: responses }, { data: progress }] = await Promise.all([
+      supabase.from('room_memberships').select('id').eq('learner_id', learnerId).limit(1),
+      supabase.from('learner_responses').select('id').eq('learner_id', learnerId).limit(1),
+      supabase.from('learner_progress').select('id').eq('learner_id', learnerId).limit(1)
+    ]);
+    return Boolean((memberships && memberships.length) || (responses && responses.length) || (progress && progress.length));
+  };
+
+  const handleAddLearner = async (nameOverride?: string) => {
+    const name = (nameOverride || newLearnerName).trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    const exists = visibleLearners.some(l => normalizeLearnerName(l.display_name) === normalizeLearnerName(name));
+    if (exists) {
+      setLearnerStatus(`${name} already exists. Edit the existing row or use a unique suffix.`);
+      return;
+    }
+
+    setLearnerStatus('Adding learner...');
+    const { error } = await supabase.from('learners').insert([{
+      id: crypto.randomUUID(),
+      display_name: name,
+      source: 'manual',
+      last_seen_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }]);
+    if (error) {
+      setLearnerStatus(`Could not add learner: ${error.message}`);
+      return;
+    }
+    setNewLearnerName('');
+    setLearnerStatus(`Added learner: ${name}`);
+    onRefreshData();
+  };
+
+  const handleEnsureRequestedLearners = async () => {
+    setLearnerStatus('Ensuring requested learner roster...');
+    for (const name of missingRequestedLearners) {
+      const { error } = await supabase.from('learners').insert([{
+        id: crypto.randomUUID(),
+        display_name: name,
+        source: 'manual',
+        last_seen_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }]);
+      if (error) {
+        setLearnerStatus(`Stopped while adding ${name}: ${error.message}`);
+        break;
+      }
+    }
+    setLearnerStatus('Requested learner roster is up to date.');
+    onRefreshData();
+  };
+
+  const handleSaveLearnerEdit = async () => {
+    if (!editingLearnerId || !editLearnerName.trim()) return;
+    const cleanName = editLearnerName.trim().replace(/\s+/g, ' ');
+    const duplicate = visibleLearners.find(l => l.id !== editingLearnerId && normalizeLearnerName(l.display_name) === normalizeLearnerName(cleanName));
+    if (duplicate) {
+      setLearnerStatus(`Cannot rename to ${cleanName}; another learner already uses that visible name.`);
+      return;
+    }
+
+    setLearnerStatus('Saving learner...');
+    const { error } = await supabase
+      .from('learners')
+      .update({ display_name: cleanName, updated_at: new Date().toISOString() })
+      .eq('id', editingLearnerId);
+    if (error) {
+      setLearnerStatus(`Could not update learner: ${error.message}`);
+      return;
+    }
+    setEditingLearnerId(null);
+    setEditLearnerName('');
+    setLearnerStatus(`Updated learner: ${cleanName}`);
+    onRefreshData();
+  };
+
+  const handleSafeDeleteLearner = async (learner: Learner) => {
+    setLearnerStatus('Checking learner history...');
+    const hasHistory = await learnerHasHistory(learner.id);
+
+    if (hasHistory) {
+      if (!window.confirm(`${learner.display_name} has classroom history. Hard delete would damage reports/progress. Archive this learner instead?`)) {
+        setLearnerStatus('Remove cancelled. Learner has history and was preserved.');
+        return;
+      }
+      const archivedName = `[archived] ${learner.display_name} • ${learner.id.slice(0, 8)}`;
+      const { error } = await supabase
+        .from('learners')
+        .update({ display_name: archivedName, updated_at: new Date().toISOString() })
+        .eq('id', learner.id);
+      if (error) {
+        setLearnerStatus(`Could not archive learner: ${error.message}`);
+        return;
+      }
+      setSelectedLearnerIds(current => current.filter(id => id !== learner.id));
+      setLearnerStatus(`Archived learner with preserved history: ${learner.display_name}`);
+      onRefreshData();
+      return;
+    }
+
+    if (!window.confirm(`Delete learner ${learner.display_name}? This learner has no classroom history.`)) {
+      setLearnerStatus('Delete cancelled.');
+      return;
+    }
+    const { error } = await supabase.from('learners').delete().eq('id', learner.id);
+    if (error) {
+      setLearnerStatus(`Could not delete learner: ${error.message}`);
+      return;
+    }
+    setSelectedLearnerIds(current => current.filter(id => id !== learner.id));
+    setLearnerStatus(`Deleted learner: ${learner.display_name}`);
+    onRefreshData();
+  };
+
+  const toggleLearnerSelection = (learnerId: string) => {
+    setSelectedLearnerIds(current =>
+      current.includes(learnerId)
+        ? current.filter(id => id !== learnerId)
+        : [...current, learnerId]
+    );
+  };
+
+  const toggleAllVisibleLearners = () => {
+    if (allVisibleLearnersSelected) {
+      setSelectedLearnerIds([]);
+      return;
+    }
+    setSelectedLearnerIds(visibleLearners.map(learner => learner.id));
+  };
+
+  const handleBulkSafeDeleteLearners = async () => {
+    const selectedLearners = visibleLearners.filter(learner => selectedLearnerIds.includes(learner.id));
+    if (selectedLearners.length === 0) return;
+
+    setLearnerStatus(`Checking history for ${selectedLearners.length} selected learners...`);
+    const learnersWithHistory: Learner[] = [];
+    const learnersWithoutHistory: Learner[] = [];
+
+    for (const learner of selectedLearners) {
+      const hasHistory = await learnerHasHistory(learner.id);
+      if (hasHistory) {
+        learnersWithHistory.push(learner);
+      } else {
+        learnersWithoutHistory.push(learner);
+      }
+    }
+
+    const previewNames = selectedLearners
+      .slice(0, 6)
+      .map(learner => learner.display_name)
+      .join(', ');
+    const overflowText = selectedLearners.length > 6 ? `, and ${selectedLearners.length - 6} more` : '';
+    const confirmMessage = [
+      `Remove ${selectedLearners.length} selected learners?`,
+      learnersWithHistory.length > 0
+        ? `${learnersWithHistory.length} with classroom history will be archived to preserve reports/progress.`
+        : null,
+      learnersWithoutHistory.length > 0
+        ? `${learnersWithoutHistory.length} with no classroom history will be permanently deleted.`
+        : null,
+      `Selected: ${previewNames}${overflowText}`
+    ].filter(Boolean).join('\n\n');
+
+    if (!window.confirm(confirmMessage)) {
+      setLearnerStatus('Bulk remove cancelled. Selected learners were preserved.');
+      return;
+    }
+
+    let archivedCount = 0;
+    let deletedCount = 0;
+
+    for (const learner of learnersWithHistory) {
+      const archivedName = `[archived] ${learner.display_name} • ${learner.id.slice(0, 8)}`;
+      const { error } = await supabase
+        .from('learners')
+        .update({ display_name: archivedName, updated_at: new Date().toISOString() })
+        .eq('id', learner.id);
+      if (error) {
+        setLearnerStatus(`Stopped bulk archive at ${learner.display_name}: ${error.message}`);
+        onRefreshData();
+        return;
+      }
+      archivedCount += 1;
+    }
+
+    for (const learner of learnersWithoutHistory) {
+      const { error } = await supabase.from('learners').delete().eq('id', learner.id);
+      if (error) {
+        setLearnerStatus(`Stopped bulk delete at ${learner.display_name}: ${error.message}`);
+        onRefreshData();
+        return;
+      }
+      deletedCount += 1;
+    }
+
+    setSelectedLearnerIds([]);
+    setLearnerStatus(`Bulk remove complete: archived ${archivedCount}, deleted ${deletedCount}.`);
+    onRefreshData();
+  };
+
+  const handleAutoRenameDuplicateLearners = async () => {
+    if (learnerDuplicateNames.size === 0) return;
+    if (!window.confirm('Auto-label duplicate learner rows by keeping the first name and appending ID suffixes to duplicate rows? This preserves learner IDs and progress.')) return;
+
+    setLearnerStatus('Resolving duplicate learner display names...');
+    const groups = new Map<string, Learner[]>();
+    visibleLearners.forEach(learner => {
+      const key = normalizeLearnerName(learner.display_name);
+      groups.set(key, [...(groups.get(key) || []), learner]);
+    });
+
+    let renamed = 0;
+    for (const [, group] of groups.entries()) {
+      if (group.length <= 1) continue;
+      const sorted = [...group].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      for (const learner of sorted.slice(1)) {
+        const newName = `${learner.display_name} (${learner.id.slice(0, 4)})`;
+        const { error } = await supabase
+          .from('learners')
+          .update({ display_name: newName, updated_at: new Date().toISOString() })
+          .eq('id', learner.id);
+        if (error) {
+          setLearnerStatus(`Stopped duplicate cleanup at ${learner.display_name}: ${error.message}`);
+          onRefreshData();
+          return;
+        }
+        renamed += 1;
+      }
+    }
+    setLearnerStatus(`Resolved duplicate display names by renaming ${renamed} learner rows.`);
+    onRefreshData();
+  };
 
   // --- CCI State ---
   const [editingCciId, setEditingCciId] = useState<string | null>(null);
@@ -70,6 +360,14 @@ export default function SettingsTab({
   const [mockCciX, setMockCciX] = useState<number>(15);
   const [mockCvrValue, setMockCvrValue] = useState<number>(1.5);
   const [mockReflectionSec, setMockReflectionSec] = useState<number>(3.5);
+  const [learnerUiSettings, setLearnerUiSettings] = useState<LearnerUiSettings>(() => readLearnerUiSettings());
+
+  const updateLearnerUiSettings = (patch: Partial<LearnerUiSettings>) => {
+    const next = { ...learnerUiSettings, ...patch };
+    setLearnerUiSettings(next);
+    localStorage.setItem('chunks_learner_ui_settings', JSON.stringify(next));
+    window.dispatchEvent(new Event('chunks_learner_ui_settings_change'));
+  };
 
   // Load performance parameters from sandboxDb
   useEffect(() => {
@@ -457,6 +755,17 @@ export default function SettingsTab({
 
         <div className="flex bg-slate-100 p-1 rounded-xl shrink-0 self-start md:self-center border border-slate-200">
           <button
+            onClick={() => setActiveSettingsSubtab('learners')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeSettingsSubtab === 'learners'
+                ? 'bg-white text-slate-900 shadow-3xs'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-emerald-600" />
+            Learners
+          </button>
+          <button
             onClick={() => setActiveSettingsSubtab('performance_y')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
               activeSettingsSubtab === 'performance_y' 
@@ -480,6 +789,190 @@ export default function SettingsTab({
           </button>
         </div>
       </div>
+
+      {/* SUBTAB 0: LIVE LEARNER ROSTER */}
+      {activeSettingsSubtab === 'learners' && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-6 animate-fadeIn" id="learner-roster-settings">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-600" />
+                Live Learner Roster
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Learners are saved to Supabase and selected by learner id in live classroom flows.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedVisibleLearners.length > 0 && (
+                <span className="px-2 py-1 rounded-lg bg-red-50 text-red-700 text-[10px] font-bold border border-red-100">
+                  {selectedVisibleLearners.length} selected
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleBulkSafeDeleteLearners}
+                disabled={selectedVisibleLearners.length === 0}
+                className="px-3 py-2 rounded-lg bg-red-600 disabled:bg-slate-200 text-white disabled:text-slate-500 text-xs font-bold transition-all inline-flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Remove selected
+              </button>
+              <button
+                type="button"
+                onClick={handleEnsureRequestedLearners}
+                disabled={missingRequestedLearners.length === 0}
+                className="px-3 py-2 rounded-lg bg-emerald-600 disabled:bg-slate-200 text-white disabled:text-slate-500 text-xs font-bold transition-all"
+              >
+                Ensure Lucy/Mason/etc. ({missingRequestedLearners.length} missing)
+              </button>
+            </div>
+          </div>
+
+          {learnerStatus && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 font-semibold">
+              {learnerStatus}
+            </div>
+          )}
+
+          {learnerDuplicateNames.size > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+              <div>
+                <strong>Duplicate display names need cleanup:</strong> {[...learnerDuplicateNames].join(', ')}.
+                Learner IDs still protect progress, but unique names make classroom selectors clearer.
+              </div>
+              <button
+                type="button"
+                onClick={handleAutoRenameDuplicateLearners}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold transition-colors"
+              >
+                Auto-label duplicate rows safely
+              </button>
+            </div>
+          )}
+
+          {archivedLearners.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              Archived learners hidden from duplicate checks: <strong>{archivedLearners.length}</strong>. History remains preserved in reports by learner ID.
+            </div>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAddLearner();
+            }}
+            className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end"
+          >
+            <div className="md:col-span-9 space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Add learner</label>
+              <input
+                value={newLearnerName}
+                onChange={(e) => setNewLearnerName(e.target.value)}
+                placeholder="e.g. Mason"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+              />
+            </div>
+            <button
+              type="submit"
+              className="md:col-span-3 px-3 py-3 rounded-xl bg-slate-900 text-white text-xs font-bold"
+            >
+              Add Learner
+            </button>
+          </form>
+
+          <div className="overflow-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
+                <tr>
+                  <th className="w-10 p-3">
+                    <button
+                      type="button"
+                      onClick={toggleAllVisibleLearners}
+                      disabled={visibleLearners.length === 0}
+                      aria-label={allVisibleLearnersSelected ? 'Clear learner selection' : 'Select all visible learners'}
+                      className="inline-flex items-center justify-center text-slate-400 hover:text-red-600 disabled:opacity-40 disabled:hover:text-slate-400 transition-colors"
+                    >
+                      {allVisibleLearnersSelected ? (
+                        <CheckSquare className="w-4 h-4" />
+                      ) : hasPartialLearnerSelection ? (
+                        <MinusSquare className="w-4 h-4" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="text-left p-3">Name</th>
+                  <th className="text-left p-3">Source</th>
+                  <th className="text-left p-3">Last Seen</th>
+                  <th className="text-left p-3">Learner ID</th>
+                  <th className="text-right p-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleLearners.length === 0 ? (
+                  <tr><td colSpan={6} className="p-8 text-center text-slate-400 italic">No visible learners found in live database.</td></tr>
+                ) : visibleLearners.map(learner => {
+                  const isDuplicate = learnerDuplicateNames.has(normalizeLearnerName(learner.display_name));
+                  const isEditing = editingLearnerId === learner.id;
+                  const isSelected = selectedLearnerIds.includes(learner.id);
+                  return (
+                    <tr key={learner.id} className={`border-t border-slate-100 hover:bg-slate-50/70 ${isSelected ? 'bg-red-50/40' : ''}`}>
+                      <td className="p-3 align-middle">
+                        <button
+                          type="button"
+                          onClick={() => toggleLearnerSelection(learner.id)}
+                          aria-label={isSelected ? `Deselect ${learner.display_name}` : `Select ${learner.display_name}`}
+                          aria-pressed={isSelected}
+                          className={`inline-flex items-center justify-center transition-colors ${isSelected ? 'text-red-600' : 'text-slate-300 hover:text-red-500'}`}
+                        >
+                          {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                        </button>
+                      </td>
+                      <td className="p-3 font-semibold text-slate-800">
+                        {isEditing ? (
+                          <input
+                            value={editLearnerName}
+                            onChange={(e) => setEditLearnerName(e.target.value)}
+                            className="p-2 border border-slate-200 rounded-lg bg-white text-xs"
+                          />
+                        ) : (
+                          <span>{learner.display_name}</span>
+                        )}
+                        {isDuplicate && <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold">DUPLICATE</span>}
+                      </td>
+                      <td className="p-3 text-slate-500">{learner.source}</td>
+                      <td className="p-3 text-slate-500">{learner.last_seen_at ? new Date(learner.last_seen_at).toLocaleString() : '—'}</td>
+                      <td className="p-3 font-mono text-[10px] text-slate-400">{learner.id}</td>
+                      <td className="p-3 text-right">
+                        {isEditing ? (
+                          <div className="flex justify-end gap-2">
+                            <button type="button" onClick={handleSaveLearnerEdit} className="px-2 py-1 rounded bg-emerald-600 text-white font-bold">Save</button>
+                            <button type="button" onClick={() => setEditingLearnerId(null)} className="px-2 py-1 rounded bg-slate-100 text-slate-600 font-bold">Cancel</button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => { setEditingLearnerId(learner.id); setEditLearnerName(learner.display_name); }}
+                              className="px-2 py-1 rounded bg-slate-100 text-slate-700 font-bold"
+                            >Edit</button>
+                            <button
+                              type="button"
+                              onClick={() => handleSafeDeleteLearner(learner)}
+                              className="px-2 py-1 rounded bg-red-50 text-red-700 font-bold"
+                            >Remove / Archive</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* SUBTAB 1: CCI & CVR SPLIT MANAGEMENT */}
       {activeSettingsSubtab === 'cci_cvr' && (
@@ -971,6 +1464,38 @@ export default function SettingsTab({
           {/* Column Right: Live Learner Screen Preview & Mockup */}
           <div className="lg:col-span-5 space-y-6">
             
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-3xs space-y-3 text-xs">
+              <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
+                <Settings2 className="w-4 h-4 text-emerald-500" />
+                Learner Frontend UI/UX
+              </h4>
+              <div className="space-y-2">
+                <label className="text-[9px] font-bold text-slate-500 uppercase block">Summary Card Title</label>
+                <input
+                  value={learnerUiSettings.summaryTitle}
+                  onChange={(e) => updateLearnerUiSettings({ summaryTitle: e.target.value })}
+                  className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:outline-none font-semibold"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
+                  <input type="checkbox" checked={learnerUiSettings.showSummaryCard} onChange={(e) => updateLearnerUiSettings({ showSummaryCard: e.target.checked })} />
+                  <span className="font-bold text-slate-700">Show summary</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
+                  <input type="checkbox" checked={learnerUiSettings.showColorCounts} onChange={(e) => updateLearnerUiSettings({ showColorCounts: e.target.checked })} />
+                  <span className="font-bold text-slate-700">Color counts</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
+                  <input type="checkbox" checked={learnerUiSettings.showHighestCpd} onChange={(e) => updateLearnerUiSettings({ showHighestCpd: e.target.checked })} />
+                  <span className="font-bold text-slate-700">Highest CPD</span>
+                </label>
+              </div>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                These frontend settings are saved locally and apply immediately to the Learner Terminal preview and live learner screen.
+              </p>
+            </div>
+
             {/* Mockup Frame Container */}
             <div className="bg-[#1e293b] border border-slate-800 rounded-3xl p-5 shadow-lg relative overflow-hidden" id="phone-mockup-frame">
               
@@ -999,15 +1524,56 @@ export default function SettingsTab({
                   <span className="text-slate-400">Student: <strong>Emily (Mock)</strong></span>
                 </div>
 
-                {/* Challenge Prompt Area */}
+                {learnerUiSettings.showSummaryCard && (
+                  <div className="bg-slate-950 text-white rounded-xl p-3 space-y-2 mt-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-black truncate">{learnerUiSettings.summaryTitle}</span>
+                      <span className="text-[9px] font-mono font-bold bg-white/10 px-2 py-0.5 rounded-full">12 answered</span>
+                    </div>
+                    <div className={`grid gap-2 ${learnerUiSettings.showHighestCpd ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                      <div className="bg-white/10 rounded-lg p-2 text-center">
+                        <span className="text-[8px] text-slate-400 font-bold uppercase block">Total</span>
+                        <strong className="text-lg font-black">12</strong>
+                      </div>
+                      {learnerUiSettings.showHighestCpd && (
+                        <div className="bg-white/10 rounded-lg p-2 text-center">
+                          <span className="text-[8px] text-slate-400 font-bold uppercase block">Highest CPD</span>
+                          <strong className="text-lg font-black text-amber-300">42</strong>
+                        </div>
+                      )}
+                    </div>
+                    {learnerUiSettings.showColorCounts && (
+                      <div className="flex flex-wrap gap-1">
+                        {performanceParams.slice(0, 4).map((param, index) => (
+                          <span key={param.id} className="px-1.5 py-0.5 rounded-full text-[8px] font-black text-white" style={{ backgroundColor: param.color_hex }}>
+                            {param.label}: {[2, 4, 5, 1][index] || 0}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Safe learner metadata only */}
                 <div className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-3xs space-y-2 mt-2">
                   <div className="flex justify-between items-center text-[8px] font-bold text-slate-400 uppercase">
-                    <span>Active Challenge Cue</span>
-                    <span className="bg-slate-100 text-slate-600 px-1.5 rounded font-mono">A-001</span>
+                    <span>Active Turn Metadata</span>
+                    <span className="bg-slate-100 text-slate-600 px-1.5 rounded font-mono">TURN 001</span>
                   </div>
-                  <p className="text-xs font-bold text-slate-700 leading-normal italic">
-                    “Introduce yourself to your supervisor with your name and role”
-                  </p>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-slate-50 rounded-lg p-2">
+                      <span className="text-[8px] text-slate-400 font-bold uppercase block">ID</span>
+                      <strong className="text-[10px] text-slate-800 font-mono">A-001</strong>
+                    </div>
+                    <div className="bg-indigo-50 rounded-lg p-2">
+                      <span className="text-[8px] text-indigo-400 font-bold uppercase block">CCI</span>
+                      <strong className="text-[10px] text-indigo-700">X={mockCciX}</strong>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-2">
+                      <span className="text-[8px] text-red-400 font-bold uppercase block">CVR</span>
+                      <strong className="text-[10px] text-red-700">Ω={mockCvrValue}</strong>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Subheading / Status */}
