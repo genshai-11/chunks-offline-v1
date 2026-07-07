@@ -477,29 +477,38 @@ export default function SimulatorTab({
     }
   }, [activeRound?.id, autoPlayAudio, resources, lastPlayedRoundId]);
 
+  const currentRoundResponses = activeRound
+    ? roundResponses.filter(response => response.round_id === activeRound.id)
+    : [];
+  const currentRoundResponseCount = currentRoundResponses.length;
+  const firstCurrentRoundResponse = currentRoundResponses[0] || null;
+
   // Teacher quick notification when first response is captured and other learners lock out.
   useEffect(() => {
-    if (!activeRound || roundResponses.length === 0) return;
-    const firstResponse = roundResponses[0];
-    if (!firstResponse || firstResponse.id === lastNotifiedResponseId) return;
-    setLastNotifiedResponseId(firstResponse.id);
-    setTeacherToast(`Captured ${firstResponse.learner.display_name}'s first response. Learner pads are locked for this round.`);
+    if (!activeRound || !firstCurrentRoundResponse) return;
+    if (firstCurrentRoundResponse.id === lastNotifiedResponseId) return;
+    setLastNotifiedResponseId(firstCurrentRoundResponse.id);
+    setTeacherToast(`Captured ${firstCurrentRoundResponse.learner.display_name}'s first response. Learner pads are locked for this round.`);
     const timer = window.setTimeout(() => setTeacherToast(''), 4500);
     return () => window.clearTimeout(timer);
-  }, [activeRound?.id, roundResponses, lastNotifiedResponseId]);
+  }, [activeRound?.id, firstCurrentRoundResponse?.id, lastNotifiedResponseId]);
 
-  // Auto-Advance logic when a student response is submitted
+  // Auto-Advance logic when a student response is submitted.
+  // IMPORTANT: only count responses that belong to the currently-open round.
+  // Realtime can briefly render the next open round while stale responses from the
+  // previous round are still in state; using raw roundResponses.length caused the
+  // app to auto-close turn 002 and jump 001 → 003 → 005.
   useEffect(() => {
     if (
       autoAdvance && 
       activeRound && 
       activeRound.status === 'open' && 
-      roundResponses.length > 0 && 
+      currentRoundResponseCount > 0 && 
       activeRound.id !== lastAutoAdvancedRoundId
     ) {
       setAutoAdvanceCountdown(1); // short visible handoff, then auto-open the next turn
     }
-  }, [autoAdvance, activeRound?.id, roundResponses.length, lastAutoAdvancedRoundId]);
+  }, [autoAdvance, activeRound?.id, currentRoundResponseCount, lastAutoAdvancedRoundId]);
 
   // Handle countdown ticks for auto-advance
   useEffect(() => {
@@ -517,16 +526,13 @@ export default function SimulatorTab({
       const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
       const nextSentenceId = getNextPlayableSentenceId(usedIds, roundToClose.sentence_resource_id);
 
-      const launchTimer = window.setTimeout(() => {
-        void (async () => {
-          setAutoAdvanceCountdown(null);
-          const closed = await handleCloseRound(roundToClose);
-          if (closed && nextSentenceId) {
-            await handleOpenRound(nextSentenceId);
-          }
-        })();
-      }, 350);
-      return () => window.clearTimeout(launchTimer);
+      void (async () => {
+        setAutoAdvanceCountdown(null);
+        const closed = await handleCloseRound(roundToClose);
+        if (closed && nextSentenceId) {
+          await handleOpenRound(nextSentenceId);
+        }
+      })();
     }
   }, [autoAdvanceCountdown, activeRound, roomRounds]);
 
@@ -672,6 +678,11 @@ export default function SimulatorTab({
   // 2. Open Round Trigger
   const handleOpenRound = async (sentenceId: string): Promise<boolean> => {
     if (!activeRoom) return false;
+
+    // Clear previous-turn responses immediately so the new open round never
+    // inherits stale response state while Supabase realtime catches up.
+    setRoundResponses([]);
+    setAutoAdvanceCountdown(null);
     
     try {
         // Determine assigned learner if capture mode is assigned
@@ -2044,17 +2055,103 @@ export default function SimulatorTab({
                           );
                         })()}
                       </div>
+
+                      <div className="mt-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-red-100 rounded-xl p-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1.5">
+                              <Languages className="w-4 h-4 text-red-600" />
+                              <span className="text-xs font-bold text-slate-700">Audio:</span>
+                            </div>
+                            <div className="inline-flex rounded-lg p-0.5 bg-red-100">
+                              <button
+                                type="button"
+                                onClick={() => setAudioLang('en')}
+                                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${audioLang === 'en' ? 'bg-white text-red-700 shadow-2xs' : 'text-red-600 hover:text-red-900'}`}
+                              >
+                                EN
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAudioLang('vi')}
+                                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${audioLang === 'vi' ? 'bg-white text-red-700 shadow-2xs' : 'text-red-600 hover:text-red-900'}`}
+                              >
+                                VI
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-700">Next CCI:</span>
+                            <select
+                              value={setupCciCardId}
+                              onChange={(e) => setSetupCciCardId(e.target.value)}
+                              className="text-xs p-1.5 bg-white border border-red-100 rounded-lg focus:ring-1 focus:ring-red-500 max-w-[220px]"
+                              title="Applies to the next opened turn"
+                            >
+                              {cciCards.map(c => (
+                                <option key={c.id} value={c.id}>{c.label} (X={c.standard_value})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg">
+                            <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-red-600 focus:ring-red-500 border-red-200 w-4 h-4" />
+                            <span>Auto-play on launch</span>
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const res = resources.find(r => r.id === activeRound.sentence_resource_id);
+                              if (res) playSentenceAudio(res);
+                            }}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition-all flex items-center gap-1.5"
+                            title="Replay the current speaker prompt. Keyboard: Space."
+                          >
+                            <Volume2 className="w-4 h-4" />
+                            Replay Prompt
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowAudioSettings(!showAudioSettings)}
+                            className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${showAudioSettings ? 'bg-red-700 text-white border-red-700 shadow-2xs' : 'bg-white text-slate-700 border-red-100 hover:bg-red-50'}`}
+                          >
+                            <Settings className="w-4 h-4" />
+                            Speech Settings
+                            {showAudioSettings ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          </button>
+                        </div>
+
+                        {showAudioSettings && (
+                          <div className="bg-white p-4 rounded-lg border border-red-100 grid grid-cols-1 md:grid-cols-3 gap-4 animate-fadeIn">
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Volume ({Math.round(audioVolume * 100)}%)</label>
+                              <input type="range" min="0" max="1" step="0.1" value={audioVolume} onChange={(e) => setAudioVolume(parseFloat(e.target.value))} className="w-full h-1.5 bg-red-100 rounded-lg appearance-none cursor-pointer accent-red-600" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Speed Rate ({audioRate}x)</label>
+                              <input type="range" min="0.5" max="2" step="0.1" value={audioRate} onChange={(e) => setAudioRate(parseFloat(e.target.value))} className="w-full h-1.5 bg-red-100 rounded-lg appearance-none cursor-pointer accent-red-600" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">Pitch ({audioPitch}x)</label>
+                              <input type="range" min="0.5" max="2" step="0.1" value={audioPitch} onChange={(e) => setAudioPitch(parseFloat(e.target.value))} className="w-full h-1.5 bg-red-100 rounded-lg appearance-none cursor-pointer accent-red-600" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {/* Live responses gathered */}
                     <div className="border-t border-red-100 pt-3 space-y-2">
                       <span className="text-[10px] font-bold text-slate-400 block uppercase">Captured Turn Response:</span>
-                      {roundResponses.length === 0 ? (
+                      {currentRoundResponseCount === 0 ? (
                         <div className="text-center py-4 text-[11px] text-slate-400 italic">
                           Waiting for the first learner response...
                         </div>
                       ) : (
-                        roundResponses.map(resp => (
+                        currentRoundResponses.map(resp => (
                           <div key={resp.id} className="p-2.5 bg-white border border-slate-200 rounded-lg flex items-center justify-between text-xs shadow-2xs animate-fadeIn">
                             <div>
                               <span className="font-semibold text-slate-800">{resp.learner.display_name}</span>

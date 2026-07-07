@@ -143,6 +143,7 @@
 - [x] T051 [US5] Lock learner memberships and clear room current round when teacher exits/finishes in `src/components/SimulatorTab.tsx`
 - [x] T052 [US5] Make Learner Terminal response buttons respect membership `can_answer` and room `finished` state in `src/components/LearnerTerminalTab.tsx`
 - [ ] T053 [US5] Validate teacher/learner two-browser flow and record evidence in `specs/001-live-db-learner-roster/quickstart.md`
+- [x] T060 [US5] Fix stale previous-round response state so auto-advance proceeds 001 → 002 → 003 without skipping and expose active-round settings inside the red teacher canvas in `src/components/SimulatorTab.tsx`
 
 ---
 
@@ -229,7 +230,7 @@ Before applying migrations or deploying:
 
 ## Notes
 
-- Current task count: 59.
+- Current task count: 60.
 - Suggested MVP scope: T001-T022.
 - DDL/migrations are planned but not applied in this task generation step.
 - Destructive learner deletion must be explicitly confirmed and should be blocked when dependent history exists.
