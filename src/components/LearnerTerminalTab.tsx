@@ -8,7 +8,7 @@ import { SentenceResource, CCIStandardCard, CCIPerformanceParameter, Learner } f
 import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { normalizeLearnerName } from '../lib/liveData';
 import { getShortSentenceCode } from '../lib/resourceCode';
-import { Users, Clock, LogIn, LogOut, Lock, CheckCircle2, BarChart3, Award } from 'lucide-react';
+import { Users, Clock, LogIn, LogOut, Lock, CheckCircle2, BarChart3, Award, Search, UserCheck } from 'lucide-react';
 
 type LearnerUiSettings = {
   showSummaryCard: boolean;
@@ -57,6 +57,7 @@ export default function LearnerTerminalTab({
   const [learnerRoomCode, setLearnerRoomCode] = useState<string>(() => localStorage.getItem('chunks_learner_room_code') || '');
   const [selectedLearnerId, setSelectedLearnerId] = useState<string>(() => localStorage.getItem('chunks_learner_id') || '');
   const [learnerDisplayName, setLearnerDisplayName] = useState<string>(() => localStorage.getItem('chunks_learner_display_name') || '');
+  const [learnerSearch, setLearnerSearch] = useState('');
 
   const [activeRoom, setActiveRoom] = useState<any>(null);
   const [activeRound, setActiveRound] = useState<any>(null);
@@ -231,7 +232,12 @@ export default function LearnerTerminalTab({
 
   const visibleLearners = learners.filter(learner => !learner.display_name.toLowerCase().startsWith('[archived]'));
   const selectedLearner = visibleLearners.find(learner => learner.id === selectedLearnerId) || null;
+  const learnerSearchTerm = normalizeLearnerName(learnerSearch);
+  const filteredVisibleLearners = visibleLearners
+    .filter(learner => !learnerSearchTerm || normalizeLearnerName(learner.display_name).includes(learnerSearchTerm))
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
   const canCreateLearnerOnJoin = learnerUiSettings.allowCreateNewLearnerOnJoin;
+  const hasJoinLearnerIdentity = Boolean(selectedLearnerId || (canCreateLearnerOnJoin && learnerDisplayName.trim()));
   const isJoinedToRoom = Boolean(currentLearnerId && joinedRoomId);
 
   const handleLearnerJoin = async (e: React.FormEvent) => {
@@ -489,24 +495,89 @@ export default function LearnerTerminalTab({
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Learner Profile</label>
-              <select
-                value={selectedLearnerId}
-                onChange={(e) => {
-                  const nextId = e.target.value;
-                  setSelectedLearnerId(nextId);
-                  const nextLearner = visibleLearners.find(learner => learner.id === nextId);
-                  if (nextLearner) setLearnerDisplayName(nextLearner.display_name);
-                }}
-                className="w-full text-center text-sm font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-red-500 focus:outline-none"
-                required={!canCreateLearnerOnJoin}
-              >
-                <option value="">Select existing learner...</option>
-                {visibleLearners.map(learner => (
-                  <option key={learner.id} value={learner.id}>{learner.display_name}</option>
-                ))}
-              </select>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Select existing learner</label>
+                <span className="text-[10px] font-bold text-slate-400">{visibleLearners.length} profiles</span>
+              </div>
+
+              <div className={`rounded-2xl border p-3 transition-all ${selectedLearner ? 'bg-red-50/40 border-red-200 shadow-xs' : 'bg-slate-50 border-slate-200'}`}>
+                {selectedLearner ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-2xl bg-red-600 text-white flex items-center justify-center font-black shadow-xs">
+                        {selectedLearner.display_name.slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-red-600">
+                          <UserCheck className="w-3 h-3" /> Selected learner
+                        </div>
+                        <div className="text-sm font-black text-slate-900 truncate">{selectedLearner.display_name}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedLearnerId('');
+                        setLearnerDisplayName('');
+                      }}
+                      className="shrink-0 px-2.5 py-1.5 rounded-lg bg-white border border-red-100 text-[10px] font-bold text-red-600 hover:bg-red-50"
+                    >
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Users className="w-4 h-4 text-slate-400" /> Choose one roster profile before joining.
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="search"
+                  value={learnerSearch}
+                  onChange={(e) => setLearnerSearch(e.target.value)}
+                  placeholder="Search learner roster..."
+                  className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                />
+              </div>
+
+              <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {filteredVisibleLearners.length === 0 ? (
+                  <div className="sm:col-span-2 px-3 py-5 text-center text-xs text-slate-400">
+                    No matching learner found{canCreateLearnerOnJoin ? '. You can type a new learner below.' : '. Ask the teacher to add this learner in Settings.'}
+                  </div>
+                ) : filteredVisibleLearners.map(learner => {
+                  const isSelected = selectedLearnerId === learner.id;
+                  return (
+                    <button
+                      key={learner.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedLearnerId(learner.id);
+                        setLearnerDisplayName(learner.display_name);
+                      }}
+                      className={`group flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-all ${
+                        isSelected
+                          ? 'bg-red-50 border-red-200 text-red-700 shadow-2xs'
+                          : 'bg-slate-50 border-slate-100 text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-2xs'
+                      }`}
+                    >
+                      <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${isSelected ? 'bg-red-600 text-white' : 'bg-white text-slate-500 border border-slate-200 group-hover:text-red-600'}`}>
+                        {learner.display_name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-black truncate">{learner.display_name}</span>
+                        <span className="block text-[9px] font-bold uppercase tracking-wide opacity-60">{learner.source === 'manual' ? 'Roster' : 'Joined before'}</span>
+                      </span>
+                      {isSelected && <CheckCircle2 className="w-4 h-4 shrink-0 text-red-600" />}
+                    </button>
+                  );
+                })}
+              </div>
+
               {currentLearnerName && !selectedLearnerId && (
                 <p className="text-[10px] text-slate-400 text-center">Previous learner identity was kept, but this room needs a fresh join.</p>
               )}
@@ -528,7 +599,7 @@ export default function LearnerTerminalTab({
 
             <button
               type="submit"
-              disabled={joining}
+              disabled={joining || !learnerRoomCode.trim() || !hasJoinLearnerIdentity}
               className="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-black shadow-xs transition-all flex items-center justify-center gap-2"
             >
               <LogIn className="w-4 h-4" />

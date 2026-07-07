@@ -226,6 +226,25 @@ export default function SimulatorTab({
     ? (setupLessonIds.length > 0 ? setupLessonIds : (selectedLessonId ? [selectedLessonId] : []))
     : (selectedLessonId ? [selectedLessonId] : []);
   const filteredSections = sections.filter(s => selectedLessonIds.includes(s.lesson_id));
+  const sectionFilterGroups = Array.from(
+    filteredSections.reduce((groups, section) => {
+      const key = section.title.trim().toLowerCase() || section.id;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.sectionIds.push(section.id);
+        existing.lessonIds.push(section.lesson_id);
+      } else {
+        groups.set(key, {
+          key,
+          title: section.title.trim() || 'Untitled section',
+          orderIndex: section.order_index,
+          sectionIds: [section.id],
+          lessonIds: [section.lesson_id],
+        });
+      }
+      return groups;
+    }, new Map<string, { key: string; title: string; orderIndex: number; sectionIds: string[]; lessonIds: string[] }>()).values()
+  ).sort((a, b) => a.orderIndex - b.orderIndex || a.title.localeCompare(b.title));
 
   const hasAnyAudio = (resource: SentenceResource) => Boolean(resource.audio_en_url || resource.audio_vi_url);
 
@@ -1477,9 +1496,11 @@ export default function SimulatorTab({
               </div>
 
               {/* Scope filter checklist */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">LIMIT TO LESSON SECTIONS (CHUNKS)</label>
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Limit to lesson sections (chunks)</label>
+                  </div>
                   {filteredSections.length > 0 && (
                     <button
                       type="button"
@@ -1492,37 +1513,44 @@ export default function SimulatorTab({
                           setSetupSectionIds(allIds);
                         }
                       }}
-                      className="text-[10px] font-bold text-red-600 hover:text-red-700 transition-colors cursor-pointer select-none"
+                      className="shrink-0 text-[10px] font-bold text-red-600 hover:text-red-700 transition-colors cursor-pointer select-none"
                     >
                       {filteredSections.every(s => setupSectionIds.includes(s.id)) ? 'Deselect All' : 'Select All'}
                     </button>
                   )}
                 </div>
                 {filteredSections.length === 0 ? (
-                  <span className="text-[11px] text-slate-400">No specific sections found. Loads all lesson materials.</span>
+                  <span className="text-[11px] text-slate-400">No sections found. The room will use all lesson materials.</span>
                 ) : (
                   <div className="flex flex-wrap gap-1.5" id="chunks-section-badges-container">
-                    {filteredSections.map(s => {
-                      const isChecked = setupSectionIds.includes(s.id);
+                    {sectionFilterGroups.map(group => {
+                      const isChecked = group.sectionIds.every(id => setupSectionIds.includes(id));
+                      const isPartiallyChecked = !isChecked && group.sectionIds.some(id => setupSectionIds.includes(id));
                       return (
                         <button
-                          key={s.id}
+                          key={group.key}
                           type="button"
+                          title={group.sectionIds.length > 1 ? `${group.sectionIds.length} matching sections selected together` : group.title}
                           onClick={() => {
-                            if (isChecked) {
-                              setSetupSectionIds(setupSectionIds.filter(id => id !== s.id));
+                            if (isChecked || isPartiallyChecked) {
+                              setSetupSectionIds(setupSectionIds.filter(id => !group.sectionIds.includes(id)));
                             } else {
-                              setSetupSectionIds([...setupSectionIds, s.id]);
+                              setSetupSectionIds(Array.from(new Set([...setupSectionIds, ...group.sectionIds])));
                             }
                           }}
                           className={`px-2.5 py-1 text-[11px] rounded-lg border font-medium transition-all duration-150 cursor-pointer flex items-center gap-1.5 ${
                             isChecked
                               ? 'bg-red-50 border-red-200 text-red-700 shadow-2xs font-semibold'
-                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+                              : isPartiallyChecked
+                                ? 'bg-amber-50 border-amber-200 text-amber-700 font-semibold'
+                                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800'
                           }`}
                         >
-                          <span className={`w-1.5 h-1.5 rounded-full transition-all ${isChecked ? 'bg-red-500 scale-110' : 'bg-slate-300'}`} />
-                          <span>{s.title}</span>
+                          <span className={`w-1.5 h-1.5 rounded-full transition-all ${isChecked ? 'bg-red-500 scale-110' : isPartiallyChecked ? 'bg-amber-500' : 'bg-slate-300'}`} />
+                          <span>{group.title}</span>
+                          {group.sectionIds.length > 1 && (
+                            <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] font-bold text-slate-400">×{group.sectionIds.length}</span>
+                          )}
                         </button>
                       );
                     })}

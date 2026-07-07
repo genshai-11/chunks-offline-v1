@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from 'react';
 import { Course, Lesson, SentenceResource, PracticeRoom, RoomRound, Learner, LearnerResponse, LearnerProgress } from '../types';
 import { getShortSentenceCode } from '../lib/resourceCode';
+import DataExplorerTab from './DataExplorerTab';
 import { 
   History, Calendar, Award, Star, BarChart2, PieChart, Users, CheckCircle, 
   HelpCircle, ChevronDown, ChevronUp, Plus, Trash2, Sliders, Filter,
@@ -35,6 +36,14 @@ interface CustomField {
   varB: string | number; // property name or numerical constant
   format: 'number' | 'percent';
 }
+
+type ProgressChartTemplate =
+  | 'learning_curve'
+  | 'difficulty_cvr'
+  | 'cci_calibration'
+  | 'grade_migration'
+  | 'speed_score'
+  | 'risk_heatmap';
 
 export default function HistoryTab({
   courses,
@@ -109,7 +118,7 @@ export default function HistoryTab({
   const [showTableColToggle, setShowTableColToggle] = useState(false);
 
   // Sub-tabs state for reports
-  const [subTab, setSubTab] = useState<'cumulative' | 'room-overview' | 'leaderboard' | 'progress'>('room-overview');
+  const [subTab, setSubTab] = useState<'cumulative' | 'room-overview' | 'leaderboard' | 'progress' | 'data-explorer'>('room-overview');
 
   // Date Filter States
   const [startDate, setStartDate] = useState<string>('');
@@ -134,6 +143,7 @@ export default function HistoryTab({
   // Custom Dynamic Room Overview Chart Builder States
   const [roomChartMetric, setRoomChartMetric] = useState<'cpd' | 'redRatio' | 'completion' | 'submissions'>('cpd');
   const [roomChartType, setRoomChartType] = useState<'bar' | 'line' | 'area'>('bar');
+  const [progressChartTemplate, setProgressChartTemplate] = useState<ProgressChartTemplate>('learning_curve');
 
   const applyDatePreset = (preset: 'all' | 'today' | 'last7' | 'last30') => {
     setDatePreset(preset);
@@ -657,6 +667,189 @@ export default function HistoryTab({
     return Object.values(groups).sort((a, b) => a.bucket - b.bucket);
   }, [filteredHistory]);
 
+  const speedScoreData = useMemo(() => filteredHistory.map(item => ({
+    x: Number(item.reflection_seconds || 0),
+    y: Number(item.cpd_result || 0),
+    grade: item.response_color,
+    learner: item.learner?.display_name || 'Anonymous',
+    round: item.round?.round_index || 0,
+    cvr: item.cvr_value || 0,
+    cci: item.cci_standard_x || 0
+  })), [filteredHistory]);
+
+  const riskByDifficultyData = useMemo(() => {
+    const groups: Record<string, { key: string; cvr: number; cci: number; responses: number; red: number; maxCpd: number }> = {};
+    filteredHistory.forEach(item => {
+      const cvr = Number(item.cvr_value || 0);
+      const cci = Number(item.cci_standard_x || 0);
+      const key = `Ω${cvr} / X${cci}`;
+      if (!groups[key]) groups[key] = { key, cvr, cci, responses: 0, red: 0, maxCpd: 0 };
+      groups[key].responses += 1;
+      groups[key].maxCpd = Math.max(groups[key].maxCpd, item.cpd_result || 0);
+      if (item.response_color === 'red') groups[key].red += 1;
+    });
+    return Object.values(groups).map(group => ({
+      name: group.key,
+      cvr: group.cvr,
+      cci: group.cci,
+      responses: group.responses,
+      redRate: group.responses ? Math.round((group.red / group.responses) * 100) : 0,
+      maxCpd: Math.round(group.maxCpd * 10) / 10
+    })).sort((a, b) => b.redRate - a.redRate || b.responses - a.responses).slice(0, 12);
+  }, [filteredHistory]);
+
+  const progressChartCatalog = useMemo(() => ([
+    {
+      id: 'learning_curve' as ProgressChartTemplate,
+      title: 'Learning Curve',
+      chartType: 'Line / Area',
+      bestFor: 'Progress over rounds or time',
+      inputs: ['X: round index or submitted time', 'Y: CPD V / CCI Performance Y', 'Series: learner or class scope', 'Sort: round asc, then submitted_at asc'],
+      processing: 'Use response-level rows, sort by round/time, keep CPD on a dedicated axis when mixing with CVR/CCI.'
+    },
+    {
+      id: 'difficulty_cvr' as ProgressChartTemplate,
+      title: 'Difficulty Impact — CVR Ω',
+      chartType: 'Grouped Bar / Line',
+      bestFor: 'Finding CVR thresholds that lift or suppress CPD',
+      inputs: ['Group: CVR Ω', 'Metrics: Max CPD V, Avg CCI Performance Y, Red-rate %', 'Aggregation: max/avg/count', 'Sort: CVR asc'],
+      processing: 'Group by numeric CVR, calculate Max CPD rather than cumulative CPD, and keep rate metrics on a secondary axis when needed.'
+    },
+    {
+      id: 'cci_calibration' as ProgressChartTemplate,
+      title: 'CCI Calibration',
+      chartType: 'Grouped Bar / Scatter',
+      bestFor: 'Checking whether CCI Standard X is too easy or too hard',
+      inputs: ['Group/X: CCI Standard X', 'Y: CPD V or CCI Performance Y', 'Color: grade', 'Aggregation: max CPD / avg Y'],
+      processing: 'Compare expected difficulty X with learner result Y; scatter is best for response-level outliers, grouped bars are best for summary.'
+    },
+    {
+      id: 'grade_migration' as ProgressChartTemplate,
+      title: 'Grade Migration',
+      chartType: 'Stacked Bar',
+      bestFor: 'Seeing Red → Yellow → Green → Purple movement by bucket',
+      inputs: ['X: round bucket or date bucket', 'Stack: grade color', 'Metric: response count', 'Bucket size: 10 rounds by default'],
+      processing: 'Bucket rounds, count each grade per bucket, stack colors in fixed severity order to avoid misleading visual changes.'
+    },
+    {
+      id: 'speed_score' as ProgressChartTemplate,
+      title: 'Speed vs Score',
+      chartType: 'Scatter',
+      bestFor: 'Checking whether faster reflection still produces good CPD',
+      inputs: ['X: reflection seconds', 'Y: CPD V', 'Color: grade', 'Tooltip: learner, round, CVR, CCI'],
+      processing: 'Use raw responses, ignore missing reflection seconds for trend interpretation, and color by grade to reveal risky fast submissions.'
+    },
+    {
+      id: 'risk_heatmap' as ProgressChartTemplate,
+      title: 'Risk by Difficulty',
+      chartType: 'Ranked Bar / Heatmap-ready',
+      bestFor: 'Finding CVR + CCI combinations that create red responses',
+      inputs: ['Group: CVR Ω + CCI Standard X', 'Metric: Red-rate %', 'Context: response count, Max CPD', 'Sort: red-rate desc'],
+      processing: 'Group by difficulty pair, calculate red-rate as red / responses, and keep response count visible so tiny samples are not over-trusted.'
+    }
+  ]), []);
+
+  const activeProgressChart = progressChartCatalog.find(item => item.id === progressChartTemplate) || progressChartCatalog[0];
+
+  const renderProgressChartStudioPreview = () => {
+    if (filteredHistory.length === 0) {
+      return <div className="flex h-72 items-center justify-center text-xs font-semibold text-slate-400 italic">No filtered response data available for chart generation.</div>;
+    }
+
+    if (progressChartTemplate === 'learning_curve') {
+      return (
+        <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+          <AreaChart data={progressTimelineData} margin={{ top: 24, right: 20, left: -18, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <YAxis tick={{ fontSize: 9 }} stroke="#ef4444" />
+            <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+            <Area type="monotone" dataKey="cpd" name="CPD Result (V)" stroke="#ef4444" fill="#fee2e2" strokeWidth={2.5} />
+          </AreaChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (progressChartTemplate === 'difficulty_cvr') {
+      return (
+        <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+          <BarChart data={cvrImpactData} margin={{ top: 24, right: 20, left: -18, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <YAxis tick={{ fontSize: 9 }} stroke="#ef4444" />
+            <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar dataKey="maxCpd" name="Max CPD (V)" fill="#ef4444" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (progressChartTemplate === 'cci_calibration') {
+      return (
+        <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+          <ScatterChart margin={{ top: 18, right: 18, left: -18, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis type="number" dataKey="x" name="CCI X" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <YAxis type="number" dataKey="y" name="CPD" unit="V" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+            <Scatter data={cciScatterData} name="CCI vs CPD">
+              {cciScatterData.map((entry, index) => <Cell key={`studio-cci-${index}`} fill={getGradeColor(entry.grade || 'red')} />)}
+            </Scatter>
+          </ScatterChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (progressChartTemplate === 'grade_migration') {
+      return (
+        <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+          <BarChart data={roundBucketTrendData} margin={{ top: 24, right: 20, left: -18, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+            <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar dataKey="red" stackId="grade" name="Red" fill="#ef4444" />
+            <Bar dataKey="yellow" stackId="grade" name="Yellow" fill="#eab308" />
+            <Bar dataKey="green" stackId="grade" name="Green" fill="#22c55e" />
+            <Bar dataKey="purple" stackId="grade" name="Purple" fill="#9333ea" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (progressChartTemplate === 'speed_score') {
+      return (
+        <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+          <ScatterChart margin={{ top: 18, right: 18, left: -18, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis type="number" dataKey="x" name="Reflect" unit="s" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <YAxis type="number" dataKey="y" name="CPD" unit="V" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+            <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+            <Scatter data={speedScoreData} name="Reflect Sec vs CPD">
+              {speedScoreData.map((entry, index) => <Cell key={`studio-speed-${index}`} fill={getGradeColor(entry.grade || 'red')} />)}
+            </Scatter>
+          </ScatterChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    return (
+      <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+        <BarChart data={riskByDifficultyData} margin={{ top: 24, right: 20, left: -18, bottom: 20 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+          <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" interval={0} angle={-18} textAnchor="end" height={58} />
+          <YAxis tick={{ fontSize: 9 }} stroke="#ef4444" unit="%" />
+          <Tooltip contentStyle={{ fontSize: 11, borderRadius: '8px' }} />
+          <Bar dataKey="redRate" name="Red-rate %" fill="#ef4444" radius={[4, 4, 0, 0]}>
+            <LabelList dataKey="responses" position="top" formatter={(value: any) => `${value}r`} style={{ fill: '#64748b', fontSize: 9, fontWeight: 800 }} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  };
+
   const roomOverviewChartData = useMemo(() => {
     return leaderboardData.map(l => {
       let metricValue = 0;
@@ -679,194 +872,106 @@ export default function HistoryTab({
     });
   }, [leaderboardData, roomChartMetric]);
 
+  const reportSubTabs = [
+    { id: 'room-overview', label: 'Tổng quan', icon: Calendar },
+    { id: 'leaderboard', label: 'Live-room', icon: Award },
+    { id: 'progress', label: 'Progress', icon: Activity },
+    { id: 'data-explorer', label: 'Data', icon: BarChart3 },
+    { id: 'cumulative', label: 'Custom field', icon: History },
+  ] as const;
+
   return (
-    <div className="space-y-6" id="history-tab">
+    <div className="space-y-5" id="history-tab">
       
-      {/* HEADER BAR AND GLOBAL FILTER CONTROLS */}
+      {/* REPORT TAB NAVIGATION FIRST */}
+      <div className="flex border-b border-slate-200 gap-1 overflow-x-auto pb-px mb-6">
+        {reportSubTabs.map(tab => {
+          const TabIcon = tab.icon;
+          const isActive = subTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSubTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                isActive
+                  ? 'border-red-500 text-red-600 bg-red-50/30'
+                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+              }`}
+            >
+              <TabIcon className={`w-4 h-4 ${isActive ? 'text-red-500' : 'text-slate-400'}`} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* REPORT SUMMARY */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-red-50 text-red-600 rounded-xl">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-3 bg-red-50 text-red-600 rounded-xl shrink-0">
               <Activity className="w-6 h-6" />
             </div>
-            <div>
-              <h2 className="font-sans font-bold text-lg text-slate-800">Dynamic Class Reports & Live Analytics</h2>
-              <p className="text-xs text-slate-500">Analyze learner response metrics, create calculated fields, and generate dynamic custom reports</p>
+            <div className="min-w-0">
+              <h2 className="font-sans font-bold text-lg text-slate-800">Reports & Live Analytics</h2>
+              <p className="text-xs text-slate-500 truncate">Learner responses, live-room metrics, progress, and custom fields.</p>
             </div>
           </div>
 
-          {/* Quick Stats Summary indicator */}
-          <div className="flex items-center gap-2 px-3.5 py-1.5 bg-slate-50 rounded-lg border border-slate-100 text-[11px] font-medium text-slate-600 font-mono">
+          <div className="flex items-center gap-2 px-3.5 py-2 bg-slate-50 rounded-xl border border-slate-100 text-[11px] font-medium text-slate-600 font-mono whitespace-nowrap">
             <span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-pulse"></span>
-            Telemetry scope: {filteredHistory.length} responses loaded
+            {filteredHistory.length} responses
           </div>
-        </div>
-
-        {/* CONTROLLERS GRID */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-5 pt-5 border-t border-slate-100">
-          
-          {/* Room Selection Dropdown */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-              <Filter className="w-3 h-3 text-red-600" /> Filter by Practice Room
-            </label>
-            <select
-              value={selectedRoomId}
-              onChange={(e) => {
-                setSelectedRoomId(e.target.value);
-                setSelectedLearnerId('all'); // Reset learner when room changes to avoid invalid intersection
-              }}
-              className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
-            >
-              <option value="all">All Live Rooms (Cross-session cumulative)</option>
-              {rooms.map(r => (
-                <option key={r.id} value={r.id}>
-                  {r.title} ({r.room_code}) — {r.status === 'finished' ? 'Finished' : 'Live Session'}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Student Selection Dropdown */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-              <Users className="w-3 h-3 text-red-600" /> Filter by Learner Profile
-            </label>
-            <select
-              value={selectedLearnerId}
-              onChange={(e) => setSelectedLearnerId(e.target.value)}
-              className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
-            >
-              <option value="all">All Students (Class Overview)</option>
-              {allLearners.map(l => (
-                <option key={l.id} value={l.id}>
-                  {l.display_name} ({l.source === 'manual' ? 'Roster' : 'Join Session'})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Reset Filters Shortcut */}
-          <div className="flex items-end gap-3 pb-0.5">
-            <button
-              onClick={() => {
-                setSelectedRoomId('all');
-                setSelectedLearnerId('all');
-              }}
-              disabled={selectedRoomId === 'all' && selectedLearnerId === 'all'}
-              className="w-full flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-4 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-300 text-slate-600 rounded-xl border border-slate-200 transition-colors cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> Clear active filters
-            </button>
-          </div>
-
         </div>
       </div>
 
-      {/* SUB-TABS NAVIGATION */}
-      <div className="flex border-b border-slate-200 gap-1 overflow-x-auto pb-px mb-6">
-        <button
-          type="button"
-          onClick={() => setSubTab('room-overview')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-            subTab === 'room-overview'
-              ? 'border-red-500 text-red-600 font-extrabold bg-red-50/20'
-              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-          }`}
-        >
-          <Calendar className="w-4 h-4 text-red-500" />
-          <span>Tổng Quan Live Room (Lọc Ngày)</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSubTab('leaderboard')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-            subTab === 'leaderboard'
-              ? 'border-red-500 text-red-600 font-extrabold bg-red-50/20'
-              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-          }`}
-        >
-          <Award className="w-4 h-4 text-red-500" />
-          <span>Bảng Xếp Hạng & Thống Kê Room</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSubTab('progress')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-            subTab === 'progress'
-              ? 'border-red-500 text-red-600 font-extrabold bg-red-50/20'
-              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-          }`}
-        >
-          <Activity className="w-4 h-4 text-red-500" />
-          <span>Progress Insights</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setSubTab('cumulative')}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-            subTab === 'cumulative'
-              ? 'border-red-500 text-red-600 font-extrabold bg-red-50/20'
-              : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-          }`}
-        >
-          <History className="w-4 h-4 text-red-500" />
-          <span>Nhật Ký & Công Thức Tùy Biến</span>
-        </button>
-      </div>
+      {subTab === 'data-explorer' && (
+        <DataExplorerTab historyItems={filteredHistory} />
+      )}
 
       {subTab === 'room-overview' && (
         <div className="space-y-6 animate-in fade-in duration-200">
           
           {/* DATE FILTER BLOCK */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-red-600" />
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-[160px]">
+                <Calendar className="w-4 h-4 text-red-600" />
                 <div>
-                  <h3 className="font-sans font-bold text-sm text-slate-800">Bộ Lọc Ngày & Preset Thời Gian</h3>
-                  <p className="text-[11px] text-slate-400 font-medium">Lọc tất cả dữ liệu tổng quan, thống kê & bảng xếp hạng theo khung thời gian thực tế</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              
-              {/* Date Pickers */}
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-500">Từ ngày:</span>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => {
-                      setStartDate(e.target.value);
-                      setDatePreset('all');
-                    }}
-                    className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer shadow-3xs"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-500">Đến ngày:</span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => {
-                      setEndDate(e.target.value);
-                      setDatePreset('all');
-                    }}
-                    className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer shadow-3xs"
-                  />
+                  <h3 className="font-sans font-bold text-sm text-slate-800">Date scope</h3>
+                  <p className="text-[10px] text-slate-400">Applies to charts and tables below.</p>
                 </div>
               </div>
 
-              {/* Quick Presets */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Phím tắt nhanh:</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">From</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    setDatePreset('all');
+                  }}
+                  className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
+                />
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">To</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setDatePreset('all');
+                  }}
+                  className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
                 {(['all', 'today', 'last7', 'last30'] as const).map(preset => {
-                  const label = preset === 'all' ? 'Tất cả' :
-                                preset === 'today' ? 'Hôm nay' :
-                                preset === 'last7' ? '7 ngày qua' : '30 ngày qua';
+                  const label = preset === 'all' ? 'All' :
+                                preset === 'today' ? 'Today' :
+                                preset === 'last7' ? '7d' : '30d';
                   return (
                     <button
                       key={preset}
@@ -892,11 +997,10 @@ export default function HistoryTab({
                     }}
                     className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold rounded-lg transition-colors cursor-pointer"
                   >
-                    Xóa bộ lọc
+                    Clear
                   </button>
                 )}
               </div>
-
             </div>
           </div>
 
@@ -995,6 +1099,59 @@ export default function HistoryTab({
 
           {/* DYNAMIC METRIC CHART FOR SELECTED ROOM AND PERIOD */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-5 border-b border-slate-100">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                  <Filter className="w-3 h-3 text-red-600" /> Room
+                </label>
+                <select
+                  value={selectedRoomId}
+                  onChange={(e) => {
+                    setSelectedRoomId(e.target.value);
+                    setSelectedLearnerId('all');
+                  }}
+                  className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
+                >
+                  <option value="all">All rooms</option>
+                  {rooms.map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.title} ({r.room_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                  <Users className="w-3 h-3 text-red-600" /> Learner
+                </label>
+                <select
+                  value={selectedLearnerId}
+                  onChange={(e) => setSelectedLearnerId(e.target.value)}
+                  className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
+                >
+                  <option value="all">All learners</option>
+                  {allLearners.map(l => (
+                    <option key={l.id} value={l.id}>{l.display_name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedRoomId('all');
+                    setSelectedLearnerId('all');
+                  }}
+                  disabled={selectedRoomId === 'all' && selectedLearnerId === 'all'}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-4 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-300 text-slate-600 rounded-xl border border-slate-200 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Reset filters
+                </button>
+              </div>
+            </div>
+
             <div className="lg:col-span-4 bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col justify-between space-y-4">
               <div className="space-y-4">
                 <div className="flex items-center gap-1.5 pb-2 border-b border-slate-200/80">
@@ -1507,6 +1664,82 @@ export default function HistoryTab({
             </div>
           ) : (
             <>
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-5">
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div>
+                    <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                      <Sliders className="w-4 h-4 text-red-600" />
+                      Progress Chart Studio — tạo chart từ filtered live responses
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-1 max-w-3xl">
+                      Module này liệt kê chart type có thể tạo, input bắt buộc, và cách xử lý dữ liệu để chart không sai scale: CPD dùng đơn vị V và ưu tiên Max CPD; CVR dùng Ω; CCI Performance Y / Standard X dùng axis riêng khi trộn với CPD.
+                    </p>
+                  </div>
+                  <select
+                    value={progressChartTemplate}
+                    onChange={(event) => setProgressChartTemplate(event.target.value as ProgressChartTemplate)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-red-500 lg:min-w-[280px]"
+                  >
+                    {progressChartCatalog.map(item => (
+                      <option key={item.id} value={item.id}>{item.title} — {item.chartType}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                  <div className="xl:col-span-7 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {progressChartCatalog.map(item => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setProgressChartTemplate(item.id)}
+                          className={`text-left rounded-xl border p-3 transition-all ${
+                            progressChartTemplate === item.id
+                              ? 'border-red-300 bg-red-50 shadow-xs ring-1 ring-red-100'
+                              : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-black text-slate-800">{item.title}</span>
+                            <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500">{item.chartType}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-1">{item.bestFor}</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                      <div className="rounded-xl border border-slate-200 bg-white p-4">
+                        <div className="text-[10px] font-black uppercase tracking-wide text-slate-400 mb-2">Required input parameters</div>
+                        <ul className="space-y-1.5 text-slate-600">
+                          {activeProgressChart.inputs.map(input => (
+                            <li key={input} className="flex gap-2"><span className="h-1.5 w-1.5 rounded-full bg-red-500 mt-1.5 shrink-0" />{input}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
+                        <div className="text-[10px] font-black uppercase tracking-wide text-indigo-500 mb-2">Data processing rule</div>
+                        <p className="text-slate-700 leading-relaxed">{activeProgressChart.processing}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="xl:col-span-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <div className="text-xs font-black text-slate-800">Preview: {activeProgressChart.title}</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase">{filteredHistory.length} filtered rows • {activeProgressChart.chartType}</div>
+                      </div>
+                      <span className="rounded-lg bg-white border border-slate-200 px-2 py-1 text-[10px] font-black text-red-600">Live</span>
+                    </div>
+                    <div className="h-72 bg-white rounded-xl border border-slate-100 p-2">
+                      {renderProgressChartStudioPreview()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 xl:col-span-2">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 pb-3 border-b border-slate-100">

@@ -1496,7 +1496,7 @@ export default function SettingsTab({
                 </label>
                 <label className="flex items-center gap-2 p-2 rounded-lg bg-indigo-50 border border-indigo-100 cursor-pointer">
                   <input type="checkbox" checked={learnerUiSettings.showRealtimeCalculationLogic} onChange={(e) => updateLearnerUiSettings({ showRealtimeCalculationLogic: e.target.checked })} />
-                  <span className="font-bold text-indigo-700">Show 实时公式 / Real-Time Logic</span>
+                  <span className="font-bold text-indigo-700">Show Real-Time Logic</span>
                 </label>
                 <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 cursor-pointer sm:col-span-2">
                   <input type="checkbox" checked={learnerUiSettings.allowCreateNewLearnerOnJoin} onChange={(e) => updateLearnerUiSettings({ allowCreateNewLearnerOnJoin: e.target.checked })} />
@@ -1633,7 +1633,7 @@ export default function SettingsTab({
                 {learnerUiSettings.showRealtimeCalculationLogic && (
                   <div className="mt-4 bg-slate-900 text-slate-200 p-3 rounded-xl border border-slate-800 text-[10px] space-y-1.5 font-mono">
                     <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider border-b border-slate-800 pb-1">
-                      实时公式 / Real-Time Calculation Logic
+                      Real-Time Calculation Logic
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-400">Y Performance Option:</span>
