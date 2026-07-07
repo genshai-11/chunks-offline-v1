@@ -138,6 +138,7 @@ export default function SimulatorTab({
   const [audioVolume, setAudioVolume] = useState<number>(1.0);
   const [isAudioPlaying, setIsAudioPlaying] = useState<boolean>(false);
   const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(true);
+  const [autoPreviewNextAudio, setAutoPreviewNextAudio] = useState<boolean>(true);
   const [showAudioSettings, setShowAudioSettings] = useState<boolean>(false);
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [isFocusMode, setIsFocusMode] = useState<boolean>(false);
@@ -147,6 +148,7 @@ export default function SimulatorTab({
   const [autoAdvance] = useState<boolean>(true);
   const [autoAdvanceCountdown, setAutoAdvanceCountdown] = useState<number | null>(null);
   const [lastPlayedRoundId, setLastPlayedRoundId] = useState<string>('');
+  const [lastPreviewedSentenceId, setLastPreviewedSentenceId] = useState<string>('');
   const [lastAutoAdvancedRoundId, setLastAutoAdvancedRoundId] = useState<string>('');
   const [lastNotifiedResponseId, setLastNotifiedResponseId] = useState<string>('');
 
@@ -461,7 +463,13 @@ export default function SimulatorTab({
     }
   };
 
-  // Auto-play audio when a new round is opened
+  const usedSentenceIdsForPreview = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+  const nextPreviewSentenceId = activeRound?.status === 'open'
+    ? null
+    : getNextPlayableSentenceId(usedSentenceIdsForPreview);
+  const nextPreviewResource = nextPreviewSentenceId ? resources.find(r => r.id === nextPreviewSentenceId) || null : null;
+
+  // Auto-play audio when a new round is opened for learners.
   useEffect(() => {
     if (activeRound && activeRound.status === 'open' && activeRound.id !== lastPlayedRoundId) {
       setLastPlayedRoundId(activeRound.id);
@@ -476,6 +484,17 @@ export default function SimulatorTab({
       }
     }
   }, [activeRound?.id, autoPlayAudio, resources, lastPlayedRoundId]);
+
+  // Auto-preview audio when the next-sentence screen is visible between turns.
+  // Teachers can turn this off and use the manual Play Prompt button instead.
+  useEffect(() => {
+    if (!autoPreviewNextAudio || !nextPreviewResource || nextPreviewResource.id === lastPreviewedSentenceId) return;
+    setLastPreviewedSentenceId(nextPreviewResource.id);
+    const timer = setTimeout(() => {
+      playSentenceAudio(nextPreviewResource);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [autoPreviewNextAudio, nextPreviewResource?.id, lastPreviewedSentenceId]);
 
   const currentRoundResponses = activeRound
     ? roundResponses.filter(response => response.round_id === activeRound.id)
@@ -2095,9 +2114,14 @@ export default function SimulatorTab({
                             </select>
                           </div>
 
-                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg">
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg" title="Automatically play audio when a turn opens for learners.">
                             <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-red-600 focus:ring-red-500 border-red-200 w-4 h-4" />
-                            <span>Auto-play on launch</span>
+                            <span>Auto-play open turn</span>
+                          </label>
+
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg" title="Automatically preview audio when the next-sentence screen is visible.">
+                            <input type="checkbox" checked={autoPreviewNextAudio} onChange={(e) => setAutoPreviewNextAudio(e.target.checked)} className="rounded text-red-600 focus:ring-red-500 border-red-200 w-4 h-4" />
+                            <span>Auto-preview next</span>
                           </label>
 
                           <button
@@ -2206,9 +2230,8 @@ export default function SimulatorTab({
                   /* SESSION CONTROL / NEXT ROUND PREVIEW */
                   <div className={`${isFocusMode ? 'p-5 md:p-6 min-h-[620px]' : 'p-4'} border border-slate-200 rounded-xl space-y-4 flex-1 flex flex-col justify-between bg-slate-50/50`}>
                     {(() => {
-                      const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
-                      const nextSentenceId = getNextPlayableSentenceId(usedIds);
-                      const nextRes = nextSentenceId ? resources.find(r => r.id === nextSentenceId) : null;
+                      const nextSentenceId = nextPreviewSentenceId;
+                      const nextRes = nextPreviewResource;
                       const nextCard = cciCards.find(c => c.id === setupCciCardId);
                       const isComplete = sessionComplete;
                       return (
@@ -2335,6 +2358,16 @@ export default function SimulatorTab({
                                 <span className="text-xs font-bold">Auto next-turn ON</span>
                               </div>
 
+                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg" title="Automatically play audio when a turn opens for learners.">
+                                <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4" />
+                                <span>Auto-play open turn</span>
+                              </label>
+
+                              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-white border border-slate-200 px-3 py-1.5 rounded-lg" title="Automatically preview audio on this next-sentence screen. Turn off for manual Play Prompt only.">
+                                <input type="checkbox" checked={autoPreviewNextAudio} onChange={(e) => setAutoPreviewNextAudio(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4" />
+                                <span>Auto-preview next</span>
+                              </label>
+
                               <button
                                 type="button"
                                 onClick={() => nextRes && playSentenceAudio(nextRes)}
@@ -2377,10 +2410,16 @@ export default function SimulatorTab({
                                   <input type="range" min="0.5" max="2" step="0.1" value={audioPitch} onChange={(e) => setAudioPitch(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
                                 </div>
                                 <div className="flex items-center justify-start md:justify-center">
-                                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
-                                    <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4" />
-                                    <span>Auto-play on launch</span>
-                                  </label>
+                                  <div className="space-y-2">
+                                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                                      <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4" />
+                                      <span>Auto-play open turn</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                                      <input type="checkbox" checked={autoPreviewNextAudio} onChange={(e) => setAutoPreviewNextAudio(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 w-4 h-4" />
+                                      <span>Auto-preview next</span>
+                                    </label>
+                                  </div>
                                 </div>
                               </div>
                             )}
