@@ -1084,9 +1084,45 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 ---
 
+## 2026-07-07 18:23 GMT+7 — Add Learner button click handler fix
 
+**Operator**: Lucy with Craft Agent  
+**Commit**: `1ea03b1`  
+**Tag**: `firebase-hosting-20260707-1823-add-learner-button-fix`  
+**Preview URL**: https://chunks-offline.web.app  
+**Production URL/version**: https://chunks-offline.web.app  
 
+### Scope
 
+- Fixed the Add Learner button in SettingsTab by explicitly attaching an `onClick` event handler calling `handleAddLearner` with `e.preventDefault()`.
+- Added hover feedback and smooth transition styles (`hover:bg-slate-800 transition-colors`) to the button.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] Pushed to GitHub `main` branch to trigger CI build.
+- [x] Created tag `firebase-hosting-20260707-1823-add-learner-button-fix` to trigger production deploy.
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1630-autoplay-fix
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+### Notes / risks
+
+- Zero database schema impact. Extremely low risk UI-only fix.
+
+---
 
 ## Template for future entries
 
