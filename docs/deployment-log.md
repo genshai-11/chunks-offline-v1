@@ -186,9 +186,9 @@ Requested mapping:
 
 ### Planned validation
 
-- [ ] List courses before rename
-- [ ] Apply idempotent title updates by course id/current title
-- [ ] Verify course names and resource counts after rename
+- [x] List courses before rename
+- [x] Apply idempotent title updates by stable course id
+- [x] Verify course names and resource counts after rename
 
 ### Rollback SQL
 
@@ -200,7 +200,11 @@ update public.courses set title = 'EREL', updated_at = now() where id = '21d2093
 
 ### Result
 
-- [ ] Pending
+- [x] Completed successfully
+- `ERES-level-A`: 15 lessons, 3,488 resources
+- `ERES-level-B`: 15 lessons, 3,580 resources
+- `EREL-level-B`: 19 lessons, 1,755 resources
+- Production app shell verified: <https://chunks-offline.web.app> returned HTTP 200
 
 ---
 
