@@ -725,6 +725,74 @@ After rollback, verify https://chunks-offline.web.app and record the rollback in
 
 ---
 
+## 2026-07-07 14:58 GMT+7 — Live audio autoplay controls Hosting release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `43884e5`  
+**Tag**: `firebase-hosting-20260707-1458-live-audio-controls`  
+**Preview URL**: https://chunks-offline--pr-7-8baie2t2.web.app  
+**Production URL/version**: https://chunks-offline.web.app served `assets/index-B-fkWJjc.js`  
+**Preview workflow**: https://github.com/genshai-11/chunks-offline-v1/actions/runs/28851038330  
+**Production workflow**: https://github.com/genshai-11/chunks-offline-v1/actions/runs/28851183241
+
+### Scope
+
+- Added separate teacher audio mode controls:
+  - **Auto-play open turn**: automatically plays audio when the real learner-answer round opens.
+  - **Auto-preview next**: automatically plays audio when the next-sentence preview screen is visible between turns.
+- Kept manual controls available when either auto mode is off:
+  - Replay Prompt in the active red canvas.
+  - Play Prompt in the next-preview canvas.
+- Added the same auto/manual controls to the red active canvas and idle/next-preview settings area.
+- Updated Spec Kit quickstart/tasks to validate teacher-controlled auto/manual audio for open turns and next-preview screens.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run lint` attempted; blocked by known RTK/ESLint JSON wrapper issue: `ESLint output (JSON parse failed: EOF while parsing a value at line 1 column 0)`.
+- [x] GitHub preview workflow passed, including CI `npm run lint` and `npm run build`.
+- [x] Preview verified:
+  - `/` → 200, `assets/index-B-fkWJjc.js`
+  - `/live-session` → 200, `assets/index-B-fkWJjc.js`
+  - `/teacher` → 200, `assets/index-B-fkWJjc.js`
+  - `/learner` → 200, `assets/index-B-fkWJjc.js`
+  - `/settings` → 200, `assets/index-B-fkWJjc.js`
+  - `/reports` → 200, `assets/index-B-fkWJjc.js`
+- [x] Production workflow passed, including CI `npm run lint` and `npm run build`.
+- [x] Production verified:
+  - `/` → 200, `assets/index-B-fkWJjc.js`
+  - `/live-session` → 200, `assets/index-B-fkWJjc.js`
+  - `/teacher` → 200, `assets/index-B-fkWJjc.js`
+  - `/learner` → 200, `assets/index-B-fkWJjc.js`
+  - `/settings` → 200, `assets/index-B-fkWJjc.js`
+  - `/reports` → 200, `assets/index-B-fkWJjc.js`
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1443-live-auto-noskip
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, verify https://chunks-offline.web.app and record the rollback in this log.
+
+### Notes / risks
+
+- Hosting-only release. No Supabase schema migration, data mutation, Storage change, or Firebase Function deploy included.
+- GitHub Actions emitted a Node.js 20 deprecation warning for `actions/checkout@v4` and `actions/setup-node@v4` being forced to Node.js 24 by the runner; deployment still passed.
+- Browser-level manual validation should confirm teacher preference behavior for both toggles: auto on and manual-only off.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
