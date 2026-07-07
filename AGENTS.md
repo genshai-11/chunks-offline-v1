@@ -23,6 +23,19 @@ Before making product, DevOps, database, or deployment changes, read:
    - `specs/001-live-db-learner-roster/tasks.md`
    - relevant checklists in `specs/001-live-db-learner-roster/checklists/`
 
+## Documentation and Wiki sync rules
+
+Repository files are the canonical source of truth. The GitHub Wiki is a readable handbook/portal and MUST NOT replace repo-controlled docs, specs, logs, or agent rules.
+
+When changing architecture, product logic, DevOps/release flow, data model, troubleshooting behavior, or agent operating rules:
+
+1. Update the canonical repo file first, such as `AGENTS.md`, `.specify/memory/constitution.md`, `docs/devops-runbook.md`, `docs/deployment-log.md`, or relevant `specs/**` artifacts.
+2. Update the matching Wiki summary source under `docs/wiki-skeleton/` in the same commit when the public handbook should change.
+3. After the GitHub Wiki is initialized, publish the refreshed summary pages to the Wiki as a follow-up docs-only sync.
+4. If the Wiki and repo conflict, follow the repo and fix the Wiki/skeleton drift.
+
+Do not duplicate detailed deployment logs or full Spec Kit artifacts in the Wiki; link back to the repo canonical files instead.
+
 ## Spec Kit workflow rules
 
 This repo uses GitHub Spec Kit. Agents MUST follow the local Spec Kit provider flow.

@@ -20,6 +20,19 @@ Agents must read:
 - Do not commit secrets or service account JSON.
 - For production deploys: validate, commit, tag, preview, deploy, verify, log.
 
+## Documentation and Wiki sync
+
+Repository files are canonical. The Wiki is a readable handbook/portal only.
+
+When architecture, product logic, DevOps/release flow, data model, troubleshooting behavior, or agent operating rules change:
+
+1. Update canonical repo docs/specs/logs first.
+2. Update matching pages under `docs/wiki-skeleton/` when the public handbook should change.
+3. Publish refreshed pages to GitHub Wiki after the Wiki is initialized.
+4. If Wiki and repo conflict, follow the repo and fix Wiki/skeleton drift.
+
+Do not duplicate full deployment logs or full Spec Kit artifacts in the Wiki; link back to canonical repo files.
+
 ## Spec Kit routing summary
 
 - New feature/change: constitution → specify → clarify → plan → tasks → analyze.
