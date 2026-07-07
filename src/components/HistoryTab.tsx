@@ -10,7 +10,7 @@ import DataExplorerTab from './DataExplorerTab';
 import { 
   History, Calendar, Award, Star, BarChart2, PieChart, Users, CheckCircle, 
   HelpCircle, ChevronDown, ChevronUp, Plus, Trash2, Sliders, Filter,
-  Activity, Sparkles, BookOpen, Clock, Settings, ToggleLeft, RefreshCw, BarChart3, ListCollapse
+  Activity, Sparkles, BookOpen, Clock, Settings, ToggleLeft, RefreshCw, BarChart3, ListCollapse, ArrowUpDown
 } from 'lucide-react';
 import { 
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area, 
@@ -97,7 +97,7 @@ export default function HistoryTab({
   // --- DYNAMIC CHART BUILDER STATE ---
   const [chartType, setChartType] = useState<'bar' | 'line' | 'area' | 'scatter'>('bar');
   const [xAxisField, setXAxisField] = useState<'learner_name' | 'room_title' | 'response_color' | 'sentence_code'>('learner_name');
-  const [yAxisMetric, setYAxisMetric] = useState<'cpd_result' | 'cci_result' | 'reflection_seconds' | 'response_count'>('cpd_result');
+  const [yAxisMetric, setYAxisMetric] = useState<string>('cpd_result');
 
   // --- TABLE COLUMN TOGGLES ---
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
@@ -116,6 +116,9 @@ export default function HistoryTab({
 
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [showTableColToggle, setShowTableColToggle] = useState(false);
+  const [showFormulaGuide, setShowFormulaGuide] = useState(false);
+  const [auditSortBy, setAuditSortBy] = useState<'submitted_at' | 'learner' | 'cci_result' | 'cpd_result' | 'response_color'>('submitted_at');
+  const [auditSortOrder, setAuditSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // Sub-tabs state for reports
   const [subTab, setSubTab] = useState<'cumulative' | 'room-overview' | 'leaderboard' | 'progress' | 'data-explorer'>('room-overview');
@@ -261,16 +264,28 @@ export default function HistoryTab({
     .sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
   }, [responses, rounds, allLearners, resources, rooms, selectedRoomId, selectedLearnerId, startDate, endDate]);
 
-  // Calculate dynamic custom fields values for a given response
-  const evalCustomField = (res: LearnerResponse, field: CustomField) => {
+  // Aggregated values are intentionally evaluated from the active filter scope.
+  // Examples: RFC = red_count / total_responses; RAC = one - rfc.
+  const getCustomFieldValue = (res: LearnerResponse, field: CustomField): number => {
+    const totalResponses = filteredHistory.length;
+    const redCount = filteredHistory.filter(item => item.response_color === 'red').length;
+    const rfc = totalResponses > 0 ? redCount / totalResponses : 0;
+    const rac = 1 - rfc;
+
     const getVal = (prop: string): number => {
       switch (prop) {
-        case 'performance_y': return res.performance_y;
-        case 'cpd_result': return res.cpd_result;
-        case 'cci_result': return res.cci_result;
-        case 'reflection_seconds': return res.reflection_seconds || 1.0;
-        case 'cci_standard_x': return res.cci_standard_x;
-        case 'cvr_value': return res.cvr_value;
+        case 'one': return 1;
+        case 'red_count': return redCount;
+        case 'non_red_count': return Math.max(totalResponses - redCount, 0);
+        case 'total_responses': return totalResponses;
+        case 'rfc': return rfc;
+        case 'rac': return rac;
+        case 'performance_y': return Number(res.performance_y || 0);
+        case 'cpd_result': return Number(res.cpd_result || 0);
+        case 'cci_result': return Number(res.cci_result || 0);
+        case 'reflection_seconds': return Number(res.reflection_seconds || 1.0);
+        case 'cci_standard_x': return Number(res.cci_standard_x || 0);
+        case 'cvr_value': return Number(res.cvr_value || 0);
         default: return 0;
       }
     };
@@ -278,17 +293,17 @@ export default function HistoryTab({
     const valA = getVal(field.varA);
     const valB = typeof field.varB === 'number' ? field.varB : getVal(field.varB as string);
 
-    let finalVal = 0;
     switch (field.operator) {
-      case '+': finalVal = valA + valB; break;
-      case '-': finalVal = valA - valB; break;
-      case '*': finalVal = valA * valB; break;
-      case '/': 
-        finalVal = valB !== 0 ? valA / valB : 0; 
-        break;
-      default: finalVal = 0;
+      case '+': return valA + valB;
+      case '-': return valA - valB;
+      case '*': return valA * valB;
+      case '/': return valB !== 0 ? valA / valB : 0;
+      default: return 0;
     }
+  };
 
+  const evalCustomField = (res: LearnerResponse, field: CustomField) => {
+    const finalVal = getCustomFieldValue(res, field);
     if (field.format === 'percent') {
       return `${Math.round(finalVal * 100 * 10) / 10}%`;
     }
@@ -350,6 +365,19 @@ export default function HistoryTab({
     const nextVisible = { ...visibleCustomFields };
     delete nextVisible[id];
     setVisibleCustomFields(nextVisible);
+    if (yAxisMetric === `custom:${id}`) setYAxisMetric('cpd_result');
+  };
+
+  const ensureCustomFieldTemplate = (template: CustomField) => {
+    const existing = customFields.find(field => field.id === template.id);
+    if (existing) {
+      setVisibleCustomFields({ ...visibleCustomFields, [template.id]: true });
+      setYAxisMetric(`custom:${template.id}`);
+      return;
+    }
+    setCustomFields([...customFields, template]);
+    setVisibleCustomFields({ ...visibleCustomFields, [template.id]: true });
+    setYAxisMetric(`custom:${template.id}`);
   };
 
   // --- DYNAMIC DATA AGGREGATION FOR RECHARTS ---
@@ -373,7 +401,10 @@ export default function HistoryTab({
 
       // Resolve Y metric value
       let yVal = 0;
-      if (yAxisMetric === 'cpd_result') {
+      if (yAxisMetric.startsWith('custom:')) {
+        const customField = customFields.find(field => field.id === yAxisMetric.replace('custom:', ''));
+        yVal = customField ? getCustomFieldValue(item, customField) : 0;
+      } else if (yAxisMetric === 'cpd_result') {
         yVal = item.cpd_result;
       } else if (yAxisMetric === 'cci_result') {
         yVal = item.cci_result;
@@ -407,7 +438,7 @@ export default function HistoryTab({
         count: g.count
       };
     }).sort((a, b) => b.value - a.value);
-  }, [filteredHistory, xAxisField, yAxisMetric]);
+  }, [filteredHistory, xAxisField, yAxisMetric, customFields]);
 
   const formatCompactNumber = (value: any) => {
     const number = Number(value || 0);
@@ -429,8 +460,42 @@ export default function HistoryTab({
   const formatDynamicChartLabel = (value: any) => {
     if (yAxisMetric === 'cpd_result') return `${formatCompactNumber(value)}V`;
     if (yAxisMetric === 'reflection_seconds') return `${formatCompactNumber(value)}s`;
+    if (yAxisMetric.startsWith('custom:')) {
+      const customField = customFields.find(field => field.id === yAxisMetric.replace('custom:', ''));
+      if (customField?.format === 'percent') return `${formatCompactNumber(Number(value || 0) * 100)}%`;
+    }
     return formatCompactNumber(value);
   };
+
+  const sortedAuditRows = useMemo(() => {
+    const rows = [...filteredHistory];
+    rows.sort((a, b) => {
+      const direction = auditSortOrder === 'asc' ? 1 : -1;
+      let valA: string | number = 0;
+      let valB: string | number = 0;
+      if (auditSortBy === 'submitted_at') {
+        valA = new Date(a.submitted_at).getTime();
+        valB = new Date(b.submitted_at).getTime();
+      } else if (auditSortBy === 'learner') {
+        valA = a.learner?.display_name || '';
+        valB = b.learner?.display_name || '';
+      } else if (auditSortBy === 'response_color') {
+        valA = a.response_color || '';
+        valB = b.response_color || '';
+      } else if (auditSortBy === 'cci_result') {
+        valA = Number(a.cci_result || 0);
+        valB = Number(b.cci_result || 0);
+      } else if (auditSortBy === 'cpd_result') {
+        valA = Number(a.cpd_result || 0);
+        valB = Number(b.cpd_result || 0);
+      }
+      if (typeof valA === 'string' || typeof valB === 'string') {
+        return String(valA).localeCompare(String(valB)) * direction;
+      }
+      return (Number(valA) - Number(valB)) * direction;
+    });
+    return rows;
+  }, [filteredHistory, auditSortBy, auditSortOrder]);
 
   // Color mapping based on performance grade for cells
   const getGradeColor = (name: string) => {
@@ -2126,6 +2191,13 @@ export default function HistoryTab({
                 <option value="cci_result">Average CCI Benchmark Score (Accuracy)</option>
                 <option value="reflection_seconds">Average Spoken Reflection Delay (Seconds)</option>
                 <option value="response_count">Total responses count (Volume)</option>
+                {customFields.length > 0 && (
+                  <optgroup label="Custom fields">
+                    {customFields.map(field => (
+                      <option key={field.id} value={`custom:${field.id}`}>{field.label}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           </div>
@@ -2243,6 +2315,29 @@ export default function HistoryTab({
           </div>
         </div>
 
+        <div className="mt-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 rounded-xl bg-indigo-50/60 border border-indigo-100 p-3">
+          <div className="text-[11px] text-indigo-900 leading-relaxed">
+            <strong className="block">Quick aggregate formulas</strong>
+            <span>RFC = Red / Total responses. RAC = 1 - RFC. Both use the active Room/Learner/Date filter scope and can be used in charts.</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => ensureCustomFieldTemplate({ id: 'rfc_rate', label: 'RFC', varA: 'red_count', operator: '/', varB: 'total_responses', format: 'percent' })}
+              className="px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 text-xs font-black hover:bg-indigo-100"
+            >
+              + RFC
+            </button>
+            <button
+              type="button"
+              onClick={() => ensureCustomFieldTemplate({ id: 'rac_rate', label: 'RAC', varA: 'one', operator: '-', varB: 'rfc', format: 'percent' })}
+              className="px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 text-xs font-black hover:bg-indigo-100"
+            >
+              + RAC
+            </button>
+          </div>
+        </div>
+
         {/* CUSTOM FIELDS DESIGN MODAL-INLINE */}
         {showFieldCreator && (
           <form onSubmit={handleAddCustomField} className="bg-slate-50 border border-slate-100 p-4 rounded-xl mt-4 space-y-3 animate-in slide-in-from-top-1 duration-150">
@@ -2280,6 +2375,11 @@ export default function HistoryTab({
                   <option value="reflection_seconds">Reflection Delay</option>
                   <option value="cci_standard_x">CCI Standard X Value</option>
                   <option value="cvr_value">CVR Multiplier</option>
+                  <option value="red_count">Red count in current filter</option>
+                  <option value="total_responses">Total responses in current filter</option>
+                  <option value="rfc">RFC — Red / Total</option>
+                  <option value="rac">RAC — 1 - RFC</option>
+                  <option value="one">Constant one (1)</option>
                 </select>
               </div>
 
@@ -2327,6 +2427,11 @@ export default function HistoryTab({
                       <option value="performance_y">Performance Level (0-3)</option>
                       <option value="cci_standard_x">CCI Standard X</option>
                       <option value="cvr_value">CVR Multiplier</option>
+                      <option value="red_count">Red count in current filter</option>
+                      <option value="total_responses">Total responses in current filter</option>
+                      <option value="rfc">RFC — Red / Total</option>
+                      <option value="rac">RAC — 1 - RFC</option>
+                      <option value="one">Constant one (1)</option>
                     </select>
                   </>
                 ) : (
@@ -2587,9 +2692,33 @@ export default function HistoryTab({
               <p className="text-[11px] text-slate-400">Locked parameter telemetry of learner oral responses</p>
             </div>
           </div>
-          <span className="text-[10px] bg-slate-100 text-slate-600 px-2.5 py-1 rounded font-bold font-mono self-start sm:self-auto uppercase">
-            FORMULA SNAPSHOT: SIMPLE-V1
-          </span>
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <span className="text-[10px] bg-slate-100 text-slate-600 px-2.5 py-1 rounded font-bold font-mono uppercase">
+              SIMPLE-V1
+            </span>
+            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1">
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+              <select
+                value={auditSortBy}
+                onChange={(e) => setAuditSortBy(e.target.value as any)}
+                className="bg-transparent text-[10px] font-bold uppercase text-slate-500 outline-none cursor-pointer"
+              >
+                <option value="submitted_at">Time</option>
+                <option value="learner">A-Z Learner</option>
+                <option value="response_color">Grade</option>
+                <option value="cci_result">CCI Result</option>
+                <option value="cpd_result">CPD Result</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => setAuditSortOrder(auditSortOrder === 'asc' ? 'desc' : 'asc')}
+                className="rounded bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-600 hover:text-red-600"
+                title="Toggle sort order"
+              >
+                {auditSortOrder === 'asc' ? 'LOW→HIGH / A-Z' : 'HIGH→LOW / Z-A'}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Dynamic Controls: Learner Filter and Columns Toggle */}
@@ -2720,13 +2849,24 @@ export default function HistoryTab({
         </div>
 
         <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3 text-[11px] text-indigo-900 leading-relaxed">
-          <strong className="block mb-1">Formula quick guide</strong>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
-            <span><b>CCI Performance (Y):</b> Red=0, Yellow=1, Green=2, Purple=3</span>
-            <span><b>CCI Result:</b> CCI Performance (Y) × CCI Standard (X)</span>
-            <span><b>CPD Result (V):</b> CCI Result × CVR Ω</span>
-            <span><b>Hidden optional:</b> Reflect Sec, Accuracy Rate %, CPD per Second can be enabled in column settings.</span>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowFormulaGuide(!showFormulaGuide)}
+            className="w-full flex items-center justify-between gap-3 text-left font-bold"
+          >
+            <span>Formula quick guide</span>
+            {showFormulaGuide ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {showFormulaGuide && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-2 pt-2 border-t border-indigo-100">
+              <span><b>CCI Y:</b> Red=0, Yellow=1, Green=2, Purple=3</span>
+              <span><b>CCI Result:</b> Y × CCI Standard X</span>
+              <span><b>CPD Result:</b> CCI Result × CVR Ω</span>
+              <span><b>RFC:</b> Red count / Total responses</span>
+              <span><b>RAC:</b> 1 - RFC</span>
+              <span><b>Chart:</b> choose any custom field in Y-axis metric.</span>
+            </div>
+          )}
         </div>
 
         <div className="overflow-x-auto pt-2">
@@ -2735,52 +2875,52 @@ export default function HistoryTab({
               No historical response records saved matching the active criteria. Start evaluations in the 'Teacher Console' to view logs.
             </div>
           ) : (
-            <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+            <table className="w-full text-left text-[11px] border-collapse min-w-[760px] table-auto">
               <thead>
                 <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
-                  {visibleColumns.timestamp && <th className="py-2.5">TIMESTAMP</th>}
-                  {visibleColumns.student && <th className="py-2.5">STUDENT</th>}
-                  {visibleColumns.room && <th className="py-2.5">ROOM / SESSION</th>}
-                  {visibleColumns.drillCode && <th className="py-2.5">DRILL</th>}
-                  {visibleColumns.grade && <th className="py-2.5" title="Grade color maps to CCI Performance Y: Red=0, Yellow=1, Green=2, Purple=3">GRADE COLOR</th>}
-                  {visibleColumns.cciPerformance && <th className="py-2.5" title="CCI Performance Y mapped from grade color. Red=0, Yellow=1, Green=2, Purple=3">CCI PERF Y</th>}
-                  {visibleColumns.cciX && <th className="py-2.5" title="CCI Standard X selected for this round">CCI STD X</th>}
-                  {visibleColumns.cvr && <th className="py-2.5" title="CVR multiplier Ω for this resource/round">CVR Ω</th>}
-                  {visibleColumns.reflectSec && <th className="py-2.5" title="Optional hidden column: reflection_time_ms / 1000">REFLECT SEC</th>}
-                  {visibleColumns.cciResult && <th className="py-2.5" title="CCI Result = CCI Performance (Y) × CCI Standard (X)">CCI RESULT</th>}
+                  {visibleColumns.timestamp && <th className="py-2 px-1">TIME</th>}
+                  {visibleColumns.student && <th className="py-2 px-1">STUDENT</th>}
+                  {visibleColumns.room && <th className="py-2 px-1">ROOM</th>}
+                  {visibleColumns.drillCode && <th className="py-2 px-1">DRILL</th>}
+                  {visibleColumns.grade && <th className="py-2 px-1" title="Grade color maps to CCI Performance Y: Red=0, Yellow=1, Green=2, Purple=3">GRADE</th>}
+                  {visibleColumns.cciPerformance && <th className="py-2 px-1" title="CCI Performance Y mapped from grade color. Red=0, Yellow=1, Green=2, Purple=3">Y</th>}
+                  {visibleColumns.cciX && <th className="py-2 px-1" title="CCI Standard X selected for this round">X</th>}
+                  {visibleColumns.cvr && <th className="py-2 px-1" title="CVR multiplier Ω for this resource/round">Ω</th>}
+                  {visibleColumns.reflectSec && <th className="py-2 px-1" title="Optional hidden column: reflection_time_ms / 1000">SEC</th>}
+                  {visibleColumns.cciResult && <th className="py-2 px-1 text-indigo-600" title="CCI Result = CCI Performance (Y) × CCI Standard (X)">CCI</th>}
                   
                   {/* DYNAMIC CUSTOM FIELDS COLUMNS */}
                   {customFields.filter(field => visibleCustomFields[field.id]).map(field => (
-                    <th key={field.id} className="py-2.5 text-indigo-600 font-bold font-mono" title={`${field.label}: ${field.varA} ${field.operator} ${typeof field.varB === 'number' ? field.varB : field.varB}`}>
+                    <th key={field.id} className="py-2 px-1 text-indigo-600 font-bold font-mono" title={`${field.label}: ${field.varA} ${field.operator} ${typeof field.varB === 'number' ? field.varB : field.varB}`}>
                       {field.label.toUpperCase()}
                     </th>
                   ))}
 
-                  {visibleColumns.cpdResult && <th className="py-2.5 text-right text-red-600 font-bold" title="CPD Result (V) = CCI Result × CVR Ω">CPD RESULT (V)</th>}
+                  {visibleColumns.cpdResult && <th className="py-2 px-1 text-right text-red-600 font-bold" title="CPD Result (V) = CCI Result × CVR Ω">CPD (V)</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 font-medium">
-                {filteredHistory.map(audit => (
+                {sortedAuditRows.map(audit => (
                   <tr key={audit.id} className="hover:bg-slate-50/50">
                     
                     {visibleColumns.timestamp && (
-                      <td className="py-3 text-[10px] text-slate-400 font-mono">
+                      <td className="py-2 px-1 text-[10px] text-slate-400 font-mono whitespace-nowrap">
                         {new Date(audit.submitted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                     )}
 
                     {visibleColumns.student && (
-                      <td className="py-3 text-slate-700 font-semibold">{audit.learner?.display_name || 'Anonymous'}</td>
+                      <td className="py-2 px-1 text-slate-700 font-semibold max-w-[110px] truncate">{audit.learner?.display_name || 'Anonymous'}</td>
                     )}
 
                     {visibleColumns.room && (
-                      <td className="py-3 text-slate-500 max-w-[150px] truncate">
+                      <td className="py-2 px-1 text-slate-500 max-w-[110px] truncate">
                         {audit.room?.title || "Simulated"}
                       </td>
                     )}
 
                     {visibleColumns.drillCode && (
-                      <td className="py-3 font-mono text-[10px]">
+                      <td className="py-2 px-1 font-mono text-[10px] whitespace-nowrap">
                         <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200/50">
                           <span title={audit.sentence?.sentence_code || 'N/A'}>
                             {getShortSentenceCode(audit.sentence?.sentence_code, audit.sentence?.order_index)}
@@ -2790,7 +2930,7 @@ export default function HistoryTab({
                     )}
 
                     {visibleColumns.grade && (
-                      <td className="py-3">
+                      <td className="py-2 px-1">
                         <span className={`px-2 py-0.5 rounded-[3px] text-[9px] font-bold text-white uppercase ${
                           audit.response_color === 'red' ? 'bg-red-500' :
                           audit.response_color === 'yellow' ? 'bg-yellow-500 text-slate-900' :
@@ -2802,39 +2942,39 @@ export default function HistoryTab({
                     )}
 
                     {visibleColumns.cciPerformance && (
-                      <td className="py-3 font-mono text-slate-600" title="CCI Performance Y from grade color">
+                      <td className="py-2 px-1 font-mono text-slate-600" title="CCI Performance Y from grade color">
                         {audit.performance_y}
                       </td>
                     )}
 
                     {visibleColumns.cciX && (
-                      <td className="py-3 font-mono text-slate-600" title="CCI Standard X">{audit.cci_standard_x}</td>
+                      <td className="py-2 px-1 font-mono text-slate-600" title="CCI Standard X">{audit.cci_standard_x}</td>
                     )}
 
                     {visibleColumns.cvr && (
-                      <td className="py-3 font-mono text-slate-600">Ω {audit.cvr_value}</td>
+                      <td className="py-2 px-1 font-mono text-slate-600">Ω{audit.cvr_value}</td>
                     )}
 
                     {visibleColumns.reflectSec && (
-                      <td className="py-3 font-mono text-slate-600">{audit.reflection_seconds}s</td>
+                      <td className="py-2 px-1 font-mono text-slate-600">{audit.reflection_seconds}s</td>
                     )}
 
                     {visibleColumns.cciResult && (
-                      <td className="py-3 font-mono text-indigo-700 font-bold" title={`${audit.performance_y} × ${audit.cci_standard_x} = ${audit.cci_result}`}>
-                        {audit.cci_result} A
+                      <td className="py-2 px-1 font-mono text-indigo-700 font-bold whitespace-nowrap" title={`${audit.performance_y} × ${audit.cci_standard_x} = ${audit.cci_result}`}>
+                        {audit.cci_result}A
                       </td>
                     )}
 
                     {/* DYNAMIC CALCULATED CUSTOM FIELDS DATA RENDERING */}
                     {customFields.filter(field => visibleCustomFields[field.id]).map(field => (
-                      <td key={field.id} className="py-3 font-mono text-indigo-600 font-bold" title={`${field.varA} ${field.operator} ${typeof field.varB === 'number' ? field.varB : field.varB}`}>
+                      <td key={field.id} className="py-2 px-1 font-mono text-indigo-600 font-bold whitespace-nowrap" title={`${field.varA} ${field.operator} ${typeof field.varB === 'number' ? field.varB : field.varB}`}>
                         {evalCustomField(audit, field)}
                       </td>
                     ))}
 
                     {visibleColumns.cpdResult && (
-                      <td className="py-3 text-right font-mono font-bold text-red-600" title={`${audit.cci_result} × ${audit.cvr_value} = ${audit.cpd_result}V`}>
-                        {audit.cpd_result} V
+                      <td className="py-2 px-1 text-right font-mono font-bold text-red-600 whitespace-nowrap" title={`${audit.cci_result} × ${audit.cvr_value} = ${audit.cpd_result}V`}>
+                        {audit.cpd_result}V
                       </td>
                     )}
 
