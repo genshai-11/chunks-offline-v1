@@ -521,6 +521,74 @@ If CCI M/S/E data must also be rolled back, use the rollback SQL recorded in the
 
 ---
 
+## 2026-07-07 13:20 GMT+7 — Supabase topic 19 Farewell party English phrase cleanup
+
+**Operator**: Lucy with Craft Agent  
+**Supabase project**: `ftfxekdxeoxizoyxuqoz`  
+**Course**: `EREL-level-B`  
+**Lesson**: `19. Farewell party` (`57196c7b-4a77-50d9-aca3-c2d7005da29d`)  
+**Hosting deploy**: Not applicable; data-only update.
+
+### Scope
+
+- Cleaned 22 `public.sentence_resources.text_en` values in topic 19 that contained slash-separated alternative phrases.
+- Rule applied: keep only the first phrase before `/`.
+- Examples:
+  - `Throw a party / Have a party / ...` → `Throw a party`
+  - `Here's to someone or something... / Let's drink... / ...` → `Here's to someone or something...`
+
+### Validation
+
+- [x] Found topic 19 lesson and confirmed 70 resources.
+- [x] Updated exactly 22 resources with `text_en like '%/%'` in lesson 19.
+- [x] Verified remaining slash-separated `text_en` count for lesson 19 is `0`.
+- [x] Verified sample rows:
+  - `EREL-T19-VOCAB-002` → `Throw a party`
+  - `EREL-T19-SLANG-003` → `Here's to someone or something...`
+
+### Rollback
+
+Run this SQL to restore the previous slash-separated English values:
+
+```sql
+update public.sentence_resources as sr
+set text_en = rollback.old_text_en,
+    updated_at = now()
+from (values
+  ('4628be62-4866-5426-95a7-789150e6d66f', $$Apart from that / Other than that / aside from that / besides that / except (for) that / excluding that$$),
+  ('8f27a42c-2d13-5c89-8f21-884e59f8f32a', $$Here's to someone or something... / Let's drink to someone or something... / let's propose a toast to someone or something... / let's drink a toast to someone or something... / let's raise our glasses to someone or something... /$$),
+  ('913230f9-e611-5ef0-95f1-4fa7102d1e1f', $$Throw a party / Have a party / give a party / hold a party / arrange a party / host a party / make a party$$),
+  ('50559ec5-5fa1-568d-b576-3c87f50c126e', $$Bid farewell / Say farewell / say goodbye$$),
+  ('6068fb2e-3c8d-5888-b2bc-330aac57ab82', $$Frankly speaking / Honestly speaking / genuinely speaking / to put it bluntly / lemme get this straight$$),
+  ('69e5a9b3-5c08-5f8e-9a2d-cc7faa9deca8', $$Famous quote / Famous saying / famous quotation / famous citation$$),
+  ('c3b46232-44a0-5e00-ad98-89432bbd897d', $$Just kidding / Just joking / just messing (around) / just for a laugh / just playing / don't take it seriously$$),
+  ('a7d3b687-f4f1-5f36-9c0f-2e0de90078c6', $$Fellow worker / Office buddy / work buddy / workmate / coworker$$),
+  ('fc363432-9da3-5534-89de-dfd9b45b6ffe', $$Shortcomings / Flaws / defects / deficiencies / imperfections$$),
+  ('59225b8d-d9eb-516d-81db-09e3e1d93a32', $$Approve / Ratify / endorse / validate / sanction$$),
+  ('4a1b8e37-b8f2-570d-bfc9-d8659ffba563', $$Catch a flight / Board a flight / get on a flight$$),
+  ('bf67b747-0170-5149-b8c0-cc22c4e55f07', $$Guys / Folks / everybody / everyone / people$$),
+  ('6f942c01-5191-5f47-af22-2115d5e1e89c', $$Resignation letter / Letter of resignation$$),
+  ('064767f0-61ff-5295-a358-e180ca9a6b7a', $$Completely understand / Fully understand / entirely understand / totally understand$$),
+  ('d8531a0b-d9c9-5b77-b37f-45340b4455d3', $$Consistency / Constancy / steadiness$$),
+  ('44f443c1-d2aa-5830-9a3b-98560e80d23e', $$Persistence / Tenacity / stubbornness / obstinacy / determination / perseverance$$),
+  ('e241ad63-0ccf-5ecc-8a7f-291ae7490ee3', $$There's a thin line / There's a fine line / there's a slim line$$),
+  ('f396a238-8e92-5d3e-a8e3-a88a80d92f9e', $$Those two / Those two things$$),
+  ('510105a9-6184-5222-9678-92e9960e5cdb', $$Think it through / Think it over$$),
+  ('8216d55b-4d73-5730-bed2-55ddc78eb6e2', $$Bad mouth / Defame / speak ill$$),
+  ('f9040d78-5bf5-5f88-a752-c8589f11762b', $$In front of boss / Before boss / ahead of boss / in the presence of boss$$),
+  ('9b5eb66c-f578-5406-b5a8-381006797189', $$Officially / Formally$$)
+) as rollback(id, old_text_en)
+where sr.id = rollback.id::uuid;
+```
+
+### Notes / risks
+
+- Data-only Supabase update; no Firebase Hosting, Supabase schema migration, or Firebase Function deploy included.
+- Existing generated audio URLs, if any, were not regenerated in this update.
+- The update intentionally affects only topic 19 rows whose English text contained `/`.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
