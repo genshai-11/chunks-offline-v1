@@ -19,6 +19,7 @@ type LearnerUiSettings = {
   showColorCounts: boolean;
   showHighestCpd: boolean;
   showRealtimeCalculationLogic: boolean;
+  allowCreateNewLearnerOnJoin: boolean;
 };
 
 const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
@@ -26,7 +27,8 @@ const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   summaryTitle: 'My Session Summary',
   showColorCounts: true,
   showHighestCpd: true,
-  showRealtimeCalculationLogic: true
+  showRealtimeCalculationLogic: true,
+  allowCreateNewLearnerOnJoin: false
 };
 
 function readLearnerUiSettings(): LearnerUiSettings {
@@ -1496,9 +1498,13 @@ export default function SettingsTab({
                   <input type="checkbox" checked={learnerUiSettings.showRealtimeCalculationLogic} onChange={(e) => updateLearnerUiSettings({ showRealtimeCalculationLogic: e.target.checked })} />
                   <span className="font-bold text-indigo-700">Show 实时公式 / Real-Time Logic</span>
                 </label>
+                <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 cursor-pointer sm:col-span-2">
+                  <input type="checkbox" checked={learnerUiSettings.allowCreateNewLearnerOnJoin} onChange={(e) => updateLearnerUiSettings({ allowCreateNewLearnerOnJoin: e.target.checked })} />
+                  <span className="font-bold text-amber-800">Allow learners to create a new profile from Join Room</span>
+                </label>
               </div>
               <p className="text-[10px] text-slate-500 leading-relaxed">
-                These frontend settings are saved locally and apply immediately to the Learner Terminal preview and live learner screen.
+                These frontend settings are saved locally and apply immediately to the Learner Terminal preview and live learner screen. Keep new-profile creation off when you want strict roster-only progress tracking.
               </p>
             </div>
 

@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { SentenceResource, CCIStandardCard, CCIPerformanceParameter, Learner } from '../types';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
+import { normalizeLearnerName } from '../lib/liveData';
 import { getShortSentenceCode } from '../lib/resourceCode';
 import { Users, Clock, LogIn, LogOut, Lock, CheckCircle2, BarChart3, Award } from 'lucide-react';
 
@@ -15,6 +16,7 @@ type LearnerUiSettings = {
   showColorCounts: boolean;
   showHighestCpd: boolean;
   showRealtimeCalculationLogic: boolean;
+  allowCreateNewLearnerOnJoin: boolean;
 };
 
 const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
@@ -22,7 +24,8 @@ const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   summaryTitle: 'My Session Summary',
   showColorCounts: true,
   showHighestCpd: true,
-  showRealtimeCalculationLogic: true
+  showRealtimeCalculationLogic: true,
+  allowCreateNewLearnerOnJoin: false
 };
 
 function readLearnerUiSettings(): LearnerUiSettings {
@@ -52,6 +55,7 @@ export default function LearnerTerminalTab({
   const [currentLearnerName, setCurrentLearnerName] = useState<string>(() => localStorage.getItem('chunks_learner_name') || '');
   const [joinedRoomId, setJoinedRoomId] = useState<string>(() => localStorage.getItem('chunks_joined_room_id') || '');
   const [learnerRoomCode, setLearnerRoomCode] = useState<string>(() => localStorage.getItem('chunks_learner_room_code') || '');
+  const [selectedLearnerId, setSelectedLearnerId] = useState<string>(() => localStorage.getItem('chunks_learner_id') || '');
   const [learnerDisplayName, setLearnerDisplayName] = useState<string>(() => localStorage.getItem('chunks_learner_display_name') || '');
 
   const [activeRoom, setActiveRoom] = useState<any>(null);
@@ -80,10 +84,21 @@ export default function LearnerTerminalTab({
     const code = params.get('room_code') || params.get('join');
     if (code) {
       const cleanCode = code.trim().toUpperCase();
+      const previousCode = localStorage.getItem('chunks_learner_room_code') || '';
       setLearnerRoomCode(cleanCode);
       localStorage.setItem('chunks_learner_room_code', cleanCode);
+
+      if (previousCode && previousCode !== cleanCode) {
+        clearJoinedRoomSession();
+      }
     }
   }, []);
+
+  useEffect(() => {
+    if (currentLearnerId && learners.some(learner => learner.id === currentLearnerId)) {
+      setSelectedLearnerId(currentLearnerId);
+    }
+  }, [currentLearnerId, learners]);
 
   useEffect(() => {
     setSubmitNotice(null);
@@ -214,16 +229,23 @@ export default function LearnerTerminalTab({
     }
   };
 
+  const visibleLearners = learners.filter(learner => !learner.display_name.toLowerCase().startsWith('[archived]'));
+  const selectedLearner = visibleLearners.find(learner => learner.id === selectedLearnerId) || null;
+  const canCreateLearnerOnJoin = learnerUiSettings.allowCreateNewLearnerOnJoin;
+  const isJoinedToRoom = Boolean(currentLearnerId && joinedRoomId);
+
   const handleLearnerJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanRoomCode = learnerRoomCode.trim().toUpperCase();
-    const cleanName = learnerDisplayName.trim();
-    if (!cleanRoomCode || !cleanName) return;
+    const typedName = learnerDisplayName.trim().replace(/\s+/g, ' ');
+    if (!cleanRoomCode) return;
 
     setJoining(true);
     try {
       if (useSandbox) {
-        const { room, learner } = sandboxDb.joinRoom({ roomCode: cleanRoomCode, displayName: cleanName });
+        const sandboxName = selectedLearner?.display_name || typedName;
+        if (!sandboxName) throw new Error('Select your learner profile before joining.');
+        const { room, learner } = sandboxDb.joinRoom({ roomCode: cleanRoomCode, displayName: sandboxName });
         persistLearnerSession(learner.id, learner.display_name, room.id, cleanRoomCode);
       } else {
         const { data: rooms, error: roomErr } = await supabase
@@ -235,36 +257,45 @@ export default function LearnerTerminalTab({
         if (!rooms || rooms.length === 0) throw new Error('Active classroom room not found for this code.');
         const targetRoom = rooms[0];
 
-        let learnerId = '';
-        let finalDisplayName = cleanName;
-        const { data: existingLearners, error: existingErr } = await supabase
-          .from('learners')
-          .select('*')
-          .ilike('display_name', cleanName)
-          .limit(1);
-        if (existingErr) throw existingErr;
+        let learnerId = selectedLearner?.id || '';
+        let finalDisplayName = selectedLearner?.display_name || typedName;
 
-        if (existingLearners && existingLearners.length > 0) {
-          learnerId = existingLearners[0].id;
-          finalDisplayName = existingLearners[0].display_name;
-          await supabase
-            .from('learners')
-            .update({ last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-            .eq('id', learnerId);
-        } else {
+        if (!learnerId && typedName) {
+          const matchingLearner = visibleLearners.find(learner => normalizeLearnerName(learner.display_name) === normalizeLearnerName(typedName));
+          if (matchingLearner) {
+            learnerId = matchingLearner.id;
+            finalDisplayName = matchingLearner.display_name;
+          }
+        }
+
+        if (!learnerId && !canCreateLearnerOnJoin) {
+          throw new Error('Select an existing learner profile. New learner creation is disabled by classroom settings.');
+        }
+
+        if (!learnerId && typedName) {
           learnerId = crypto.randomUUID();
           const { error: learnerErr } = await supabase
             .from('learners')
             .insert([{
               id: learnerId,
-              display_name: finalDisplayName,
+              display_name: typedName,
               source: 'anonymous',
               last_seen_at: new Date().toISOString(),
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
             }]);
           if (learnerErr) throw learnerErr;
+          finalDisplayName = typedName;
         }
+
+        if (!learnerId || !finalDisplayName) {
+          throw new Error('Select your learner profile before joining.');
+        }
+
+        await supabase
+          .from('learners')
+          .update({ last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('id', learnerId);
 
         const { error: membershipErr } = await supabase
           .from('room_memberships')
@@ -299,9 +330,20 @@ export default function LearnerTerminalTab({
 
     setCurrentLearnerId(learnerId);
     setCurrentLearnerName(learnerName);
+    setSelectedLearnerId(learnerId);
     setJoinedRoomId(roomId);
     setLearnerRoomCode(roomCode);
     setLearnerDisplayName(learnerName);
+  };
+
+  const clearJoinedRoomSession = () => {
+    localStorage.removeItem('chunks_joined_room_id');
+    setJoinedRoomId('');
+    setActiveRoom(null);
+    setActiveRound(null);
+    setRoundResponses([]);
+    setSessionResponses([]);
+    setMemberCount(0);
   };
 
   const handleLogOut = () => {
@@ -310,6 +352,7 @@ export default function LearnerTerminalTab({
     localStorage.removeItem('chunks_joined_room_id');
     setCurrentLearnerId('');
     setCurrentLearnerName('');
+    setSelectedLearnerId('');
     setJoinedRoomId('');
     setActiveRoom(null);
     setActiveRound(null);
@@ -421,7 +464,7 @@ export default function LearnerTerminalTab({
 
   return (
     <div className="min-h-[calc(100vh-2rem)] flex items-center justify-center px-3 py-6" id="learner-terminal-root">
-      {!currentLearnerId ? (
+      {!isJoinedToRoom ? (
         <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden p-6 md:p-8 space-y-6">
           <div className="text-center space-y-2">
             <div className="w-14 h-14 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
@@ -429,7 +472,7 @@ export default function LearnerTerminalTab({
             </div>
             <h3 className="text-lg font-black text-slate-900">Join Classroom</h3>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Enter your room code and display name. This screen is learner-only.
+              Enter the room code and select your learner profile so progress follows the same user across live rooms.
             </p>
           </div>
 
@@ -447,16 +490,41 @@ export default function LearnerTerminalTab({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Your Name</label>
-              <input
-                type="text"
-                placeholder="Enter your name"
-                value={learnerDisplayName}
-                onChange={(e) => setLearnerDisplayName(e.target.value)}
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Learner Profile</label>
+              <select
+                value={selectedLearnerId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedLearnerId(nextId);
+                  const nextLearner = visibleLearners.find(learner => learner.id === nextId);
+                  if (nextLearner) setLearnerDisplayName(nextLearner.display_name);
+                }}
                 className="w-full text-center text-sm font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-red-500 focus:outline-none"
-                required
-              />
+                required={!canCreateLearnerOnJoin}
+              >
+                <option value="">Select existing learner...</option>
+                {visibleLearners.map(learner => (
+                  <option key={learner.id} value={learner.id}>{learner.display_name}</option>
+                ))}
+              </select>
+              {currentLearnerName && !selectedLearnerId && (
+                <p className="text-[10px] text-slate-400 text-center">Previous learner identity was kept, but this room needs a fresh join.</p>
+              )}
             </div>
+
+            {canCreateLearnerOnJoin && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Create New If Missing</label>
+                <input
+                  type="text"
+                  placeholder="Type a new learner name only if not listed"
+                  value={learnerDisplayName}
+                  onChange={(e) => setLearnerDisplayName(e.target.value)}
+                  className="w-full text-center text-sm font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-red-500 focus:outline-none"
+                />
+                <p className="text-[10px] text-slate-400 text-center">If the typed name already exists, the existing learner record is reused.</p>
+              </div>
+            )}
 
             <button
               type="submit"

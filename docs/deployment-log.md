@@ -113,6 +113,58 @@ Use Firebase Console Hosting release rollback, or redeploy the previous tag `fir
 
 ---
 
+## 2026-07-07 10:31 GMT+7 — Learner join cache fix, roster-only join, EREL import
+
+**Operator**: Lucy with Craft Agent  
+**Production URL**: <https://chunks-offline.web.app>
+
+### Scope
+
+- Fix learner deep-link room cache for `/learner?room_code=CH-7175` and other room-code links.
+- Keep learner identity but clear stale joined-room state when URL room code changes.
+- Add required learner roster selection on Join Room so progress tracks by durable `learners.id` across live rooms.
+- Add Settings toggle: allow/disallow learner-created profiles from Join Room. Default is off for strict roster tracking.
+- Add EREL multi-topic lesson selection in Teacher Console.
+- Import `docs/chunks-19topics.csv` into Supabase as course `EREL` with 19 topic lessons, 125 part sections, and 1,755 sentence resources.
+
+### Supabase migration/import evidence
+
+- Course id: `21d20930-fcac-54a2-a148-bfd31940cb5a`
+- Course title: `EREL`
+- Lessons/topics: 19
+- Sections: 125
+- Sentence resources: 1,755
+- Import is deterministic/idempotent by stable UUIDs generated from course/topic/part/resource keys.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Supabase import counts verified
+- [ ] Firebase preview verified
+- [ ] Production verified
+
+### Rollback
+
+Hosting rollback: Firebase Console → Hosting → site `chunks-offline` → rollback to previous release.
+
+Data rollback for EREL import only, if required and no live-room history depends on it:
+
+```sql
+delete from public.sentence_resources where course_id = '21d20930-fcac-54a2-a148-bfd31940cb5a';
+delete from public.lesson_sections where lesson_id in (select id from public.lessons where course_id = '21d20930-fcac-54a2-a148-bfd31940cb5a');
+delete from public.lessons where course_id = '21d20930-fcac-54a2-a148-bfd31940cb5a';
+delete from public.courses where id = '21d20930-fcac-54a2-a148-bfd31940cb5a';
+```
+
+### Notes / risks
+
+- Active Spec Kit checklists still had incomplete items; Lucy explicitly approved proceeding anyway.
+- EREL import was applied before Hosting deploy so preview/production can load course data immediately.
+- No Firebase Function deploy is included.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>

@@ -51,6 +51,7 @@ export default function SimulatorTab({
 
   const [setupCourseId, setSetupCourseId] = useState<string>('');
   const [setupLessonId, setSetupLessonId] = useState<string>('');
+  const [setupLessonIds, setSetupLessonIds] = useState<string[]>([]);
   const [setupSectionIds, setSetupSectionIds] = useState<string[]>([]);
   const [setupCciCardId, setSetupCciCardId] = useState<string>('');
   const [setupCaptureMode, setSetupCaptureMode] = useState<'assigned' | 'first_responder' | 'auto_rotate'>('first_responder');
@@ -73,25 +74,33 @@ export default function SimulatorTab({
       if (!courseExists || !setupCourseId) {
         setSetupCourseId(courses[0].id);
         setSetupLessonId('');
+        setSetupLessonIds([]);
         setSetupSectionIds([]);
       }
     } else {
       setSetupCourseId('');
       setSetupLessonId('');
+      setSetupLessonIds([]);
       setSetupSectionIds([]);
     }
   }, [courses, setupCourseId]);
 
   useEffect(() => {
     const validLessons = lessons.filter(l => l.course_id === setupCourseId);
+    const validLessonIds = new Set(validLessons.map(l => l.id));
     if (validLessons.length > 0) {
-      const lessonExists = validLessons.some(l => l.id === setupLessonId);
+      const lessonExists = validLessonIds.has(setupLessonId);
       if (!lessonExists) {
         setSetupLessonId(validLessons[0].id);
         setSetupSectionIds([]);
       }
+      setSetupLessonIds(current => {
+        const next = current.filter(id => validLessonIds.has(id));
+        return next.length === current.length ? current : next;
+      });
     } else {
       setSetupLessonId('');
+      setSetupLessonIds([]);
       setSetupSectionIds([]);
     }
   }, [lessons, setupCourseId, setupLessonId]);
@@ -210,8 +219,13 @@ export default function SimulatorTab({
   
   // Setup dependent selections
   const filteredLessons = lessons.filter(l => l.course_id === setupCourseId);
+  const selectedCourse = courses.find(c => c.id === setupCourseId) || null;
+  const isErelCourse = (selectedCourse?.title || '').trim().toUpperCase() === 'EREL';
   const selectedLessonId = setupLessonId || filteredLessons[0]?.id || '';
-  const filteredSections = sections.filter(s => s.lesson_id === selectedLessonId);
+  const selectedLessonIds = isErelCourse
+    ? (setupLessonIds.length > 0 ? setupLessonIds : (selectedLessonId ? [selectedLessonId] : []))
+    : (selectedLessonId ? [selectedLessonId] : []);
+  const filteredSections = sections.filter(s => selectedLessonIds.includes(s.lesson_id));
 
   const hasAnyAudio = (resource: SentenceResource) => Boolean(resource.audio_en_url || resource.audio_vi_url);
 
@@ -230,7 +244,7 @@ export default function SimulatorTab({
 
     const exact = resources.filter(r =>
       r.course_id === setupCourseId &&
-      r.lesson_id === selectedLessonId &&
+      selectedLessonIds.includes(r.lesson_id) &&
       isApproved(r) &&
       inSelectedSections(r)
     );
@@ -238,7 +252,7 @@ export default function SimulatorTab({
 
     // Fallback for imported rows where course_id drifted but lesson_id/section_id is correct.
     return resources.filter(r =>
-      r.lesson_id === selectedLessonId &&
+      selectedLessonIds.includes(r.lesson_id) &&
       isApproved(r) &&
       inSelectedSections(r)
     );
@@ -517,9 +531,9 @@ export default function SimulatorTab({
       status: 'lobby',
       current_round_id: null,
       course_id: setupCourseId,
-      lesson_id: selectedLessonId,
+      lesson_id: selectedLessonIds.length === 1 ? selectedLessonIds[0] : null,
       host_name: hostName,
-      resource_scope_filter: { sectionIds: setupSectionIds },
+      resource_scope_filter: { lessonIds: selectedLessonIds, sectionIds: setupSectionIds },
       snapshot_sentence_resource_ids: approvedResources.map(r => r.id),
       scope_refreshed_at: new Date().toISOString(),
       scoring_mode: setupScoringMode,
@@ -1392,6 +1406,7 @@ export default function SimulatorTab({
                     onChange={(e) => {
                       setSetupCourseId(e.target.value);
                       setSetupLessonId('');
+                      setSetupLessonIds([]);
                       setSetupSectionIds([]);
                     }}
                     className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded focus:ring-1 focus:ring-red-500"
@@ -1403,19 +1418,61 @@ export default function SimulatorTab({
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-bold text-slate-500 block mb-1">CHOOSE LESSON</label>
-                  <select
-                    value={selectedLessonId}
-                    onChange={(e) => {
-                      setSetupLessonId(e.target.value);
-                      setSetupSectionIds([]);
-                    }}
-                    className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded focus:ring-1 focus:ring-red-500"
-                  >
-                    {filteredLessons.map(l => (
-                      <option key={l.id} value={l.id}>{l.title}</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="text-[10px] font-bold text-slate-500 block">CHOOSE LESSON{isErelCourse ? ' / TOPICS' : ''}</label>
+                    {isErelCourse && filteredLessons.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allLessonIds = filteredLessons.map(l => l.id);
+                          const allSelected = allLessonIds.every(id => selectedLessonIds.includes(id));
+                          setSetupLessonIds(allSelected ? [] : allLessonIds);
+                          setSetupSectionIds([]);
+                        }}
+                        className="text-[10px] font-bold text-red-600 hover:text-red-700"
+                      >
+                        {filteredLessons.every(l => selectedLessonIds.includes(l.id)) ? 'Clear Topics' : 'All Topics'}
+                      </button>
+                    )}
+                  </div>
+                  {isErelCourse ? (
+                    <div className="max-h-36 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 flex flex-wrap gap-1.5">
+                      {filteredLessons.map(l => {
+                        const checked = selectedLessonIds.includes(l.id);
+                        return (
+                          <button
+                            key={l.id}
+                            type="button"
+                            onClick={() => {
+                              const next = checked
+                                ? selectedLessonIds.filter(id => id !== l.id)
+                                : [...selectedLessonIds, l.id];
+                              setSetupLessonIds(next);
+                              setSetupLessonId(next[0] || l.id);
+                              setSetupSectionIds([]);
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] border font-bold transition-colors ${checked ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-slate-200 text-slate-500 hover:text-slate-800'}`}
+                          >
+                            {l.title}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedLessonId}
+                      onChange={(e) => {
+                        setSetupLessonId(e.target.value);
+                        setSetupLessonIds([]);
+                        setSetupSectionIds([]);
+                      }}
+                      className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded focus:ring-1 focus:ring-red-500"
+                    >
+                      {filteredLessons.map(l => (
+                        <option key={l.id} value={l.id}>{l.title}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
 
