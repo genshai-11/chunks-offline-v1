@@ -116,7 +116,11 @@ Use Firebase Console Hosting release rollback, or redeploy the previous tag `fir
 ## 2026-07-07 10:31 GMT+7 — Learner join cache fix, roster-only join, EREL import
 
 **Operator**: Lucy with Craft Agent  
-**Production URL**: <https://chunks-offline.web.app>
+**Production URL**: <https://chunks-offline.web.app>  
+**Preview URL**: <https://chunks-offline--learner-erel-20260707-1031-e26j7bho.web.app>  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28839872129>  
+**Commit**: `ec70ea1`  
+**Tag**: `firebase-hosting-20260707-1031-learner-erel`
 
 ### Scope
 
@@ -141,8 +145,8 @@ Use Firebase Console Hosting release rollback, or redeploy the previous tag `fir
 - [x] `npx tsc --noEmit`
 - [x] `npm run build`
 - [x] Supabase import counts verified
-- [ ] Firebase preview verified
-- [ ] Production verified
+- [x] Firebase preview verified: `/learner?room_code=CH-7175` returned HTTP 200 and app shell
+- [x] Production verified: <https://chunks-offline.web.app/learner?room_code=CH-7175> returned HTTP 200 and served `assets/index-Cml1KnwZ.js`
 
 ### Rollback
 
