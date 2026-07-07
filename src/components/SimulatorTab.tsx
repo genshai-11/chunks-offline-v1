@@ -180,7 +180,7 @@ export default function SimulatorTab({
     const audioUrl = audioLang === 'en' ? res.audio_en_url : res.audio_vi_url;
 
     if (audioUrl) {
-      const playableUrl = resolveResourceAudioUrl(audioUrl);
+      const playableUrl = resolveResourceAudioUrl(audioUrl, res.updated_at);
       const exists = await checkResourceAudioExists(audioUrl);
 
       if (!playableUrl || playableUrl.startsWith('speech-synth:') || exists === false) {

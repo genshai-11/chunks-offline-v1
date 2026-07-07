@@ -12,26 +12,30 @@ const RESOURCE_AUDIO_PUBLIC_PATH = `/storage/v1/object/public/${RESOURCE_AUDIO_B
  * HTMLAudioElement cannot play bucket-relative paths from the Vite origin, so
  * normalize storage paths to public Supabase Storage URLs before playback.
  */
-export function resolveResourceAudioUrl(rawUrl: string | null | undefined): string {
+export function resolveResourceAudioUrl(rawUrl: string | null | undefined, updatedAt?: string): string {
   const source = String(rawUrl || '').trim();
   if (!source) return '';
 
+  let url = '';
   if (ABSOLUTE_OR_EMBEDDED_URL_PATTERN.test(source)) {
+    url = source;
+  } else if (source.startsWith('speech-synth:')) {
     return source;
+  } else {
+    const storagePath = source
+      .replace(/^\/+/, '')
+      .replace(/^storage\/v1\/object\/public\/resource-audio\//, '')
+      .replace(/^resource-audio\//, '');
+
+    url = supabase.storage.from(RESOURCE_AUDIO_BUCKET).getPublicUrl(storagePath).data.publicUrl;
   }
 
-  // Legacy sandbox pseudo-URL. This is not directly playable by <audio>, but
-  // callers that support speech synthesis fallback can detect it separately.
-  if (source.startsWith('speech-synth:')) {
-    return source;
+  if (url && updatedAt) {
+    const separator = url.includes('?') ? '&' : '?';
+    url = `${url}${separator}t=${new Date(updatedAt).getTime()}`;
   }
 
-  const storagePath = source
-    .replace(/^\/+/, '')
-    .replace(/^storage\/v1\/object\/public\/resource-audio\//, '')
-    .replace(/^resource-audio\//, '');
-
-  return supabase.storage.from(RESOURCE_AUDIO_BUCKET).getPublicUrl(storagePath).data.publicUrl;
+  return url;
 }
 
 export function isResourceStoragePublicUrl(url: string): boolean {

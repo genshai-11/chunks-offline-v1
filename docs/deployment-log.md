@@ -958,6 +958,49 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 ---
 
+## 2026-07-07 16:25 GMT+7 — Audio cache buster implementation
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `e37bf47`  
+**Tag**: `firebase-hosting-20260707-1625-audio-cachebuster`  
+**Preview URL**: https://chunks-offline--preview-local-mpqkh436.web.app  
+**Production URL/version**: https://chunks-offline.web.app  
+
+### Scope
+
+- Updated `resolveResourceAudioUrl` in [src/lib/audioUrl.ts](file:///C:/Users/gensh/OneDrive/M%C3%A1y%20t%C3%ADnh/LUCY/PROJECT-WORKPLACE/chunks-offline-v1/src/lib/audioUrl.ts) to accept an optional `updatedAt` parameter. When provided, it appends a query parameter `?t={timestamp}` as a cache-buster to bypass browser and CDN caching of overwritten audio files in Supabase Storage.
+- Modified `playSentenceAudio` in [src/components/SimulatorTab.tsx](file:///C:/Users/gensh/OneDrive/M%C3%A1y%20t%C3%ADnh/LUCY/PROJECT-WORKPLACE/chunks-offline-v1/src/components/SimulatorTab.tsx) to pass `res.updated_at` when calling `resolveResourceAudioUrl`.
+- Modified `playAudio` in [src/components/LibraryTab.tsx](file:///C:/Users/gensh/OneDrive/M%C3%A1y%20t%C3%ADnh/LUCY/PROJECT-WORKPLACE/chunks-offline-v1/src/components/LibraryTab.tsx) to accept and pass the resource's `updated_at` timestamp.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run deploy:preview` channel deployed and verified: https://chunks-offline--preview-local-mpqkh436.web.app
+  - Verified audio playback URLs correctly append the `?t={timestamp}` query parameter when playing.
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1540-settings-standards
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+### Notes / risks
+
+- Low-risk UI-only change. Does not mutate database schema or storage paths.
+
+---
+
+
 
 ## Template for future entries
 

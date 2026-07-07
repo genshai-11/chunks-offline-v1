@@ -132,7 +132,7 @@ export default function LibraryTab({
     onRefreshData();
   };
 
-  const playAudio = async (url: string, key: string) => {
+  const playAudio = async (url: string, key: string, updatedAt?: string) => {
     if (activeAudio) {
       activeAudio.pause();
       if (currentlyPlaying === key) {
@@ -142,7 +142,7 @@ export default function LibraryTab({
       }
     }
 
-    const playableUrl = resolveResourceAudioUrl(url);
+    const playableUrl = resolveResourceAudioUrl(url, updatedAt);
     if (!playableUrl) return;
 
     const exists = await checkResourceAudioExists(url);
@@ -1020,7 +1020,7 @@ export default function LibraryTab({
                                 {r.audio_en_url ? (
                                   <button 
                                     type="button"
-                                    onClick={() => playAudio(r.audio_en_url!, r.id + '_en')}
+                                    onClick={() => playAudio(r.audio_en_url!, r.id + '_en', r.updated_at)}
                                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all w-32 justify-center ${
                                       currentlyPlaying === r.id + '_en' 
                                         ? 'bg-red-500 text-white animate-pulse' 
@@ -1047,7 +1047,7 @@ export default function LibraryTab({
                                 {r.audio_vi_url ? (
                                   <button 
                                     type="button"
-                                    onClick={() => playAudio(r.audio_vi_url!, r.id + '_vi')}
+                                    onClick={() => playAudio(r.audio_vi_url!, r.id + '_vi', r.updated_at)}
                                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all w-32 justify-center ${
                                       currentlyPlaying === r.id + '_vi' 
                                         ? 'bg-red-500 text-white animate-pulse' 
@@ -1156,7 +1156,7 @@ export default function LibraryTab({
                             {r.audio_en_url ? (
                               <button 
                                 type="button"
-                                onClick={() => playAudio(r.audio_en_url!, r.id + '_en')}
+                                onClick={() => playAudio(r.audio_en_url!, r.id + '_en', r.updated_at)}
                                 className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
                                   currentlyPlaying === r.id + '_en' 
                                     ? 'bg-red-500 text-white animate-pulse' 
@@ -1180,7 +1180,7 @@ export default function LibraryTab({
                             {r.audio_vi_url ? (
                               <button 
                                 type="button"
-                                onClick={() => playAudio(r.audio_vi_url!, r.id + '_vi')}
+                                onClick={() => playAudio(r.audio_vi_url!, r.id + '_vi', r.updated_at)}
                                 className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
                                   currentlyPlaying === r.id + '_vi' 
                                     ? 'bg-red-500 text-white animate-pulse' 
