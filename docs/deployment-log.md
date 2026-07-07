@@ -589,6 +589,72 @@ where sr.id = rollback.id::uuid;
 
 ---
 
+## 2026-07-07 14:25 GMT+7 — Live session rejoin and safe close Hosting release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `9bb6d52`  
+**Tag**: `firebase-hosting-20260707-1425-live-session-safe-close`  
+**Preview URL**: https://chunks-offline--pr-5-868482z3.web.app  
+**Production URL/version**: https://chunks-offline.web.app served `assets/index-CUalHq_9.js`  
+**Preview workflow**: https://github.com/genshai-11/chunks-offline-v1/actions/runs/28849250937  
+**Production workflow**: https://github.com/genshai-11/chunks-offline-v1/actions/runs/28849325195
+
+### Scope
+
+- Added `/live-session` route and navigation entry for live classroom session management.
+- Added teacher live-session manager for active room rejoin and recent finished-room review.
+- Fixed auto-advance so captured rounds close and the next playable sentence opens in the same teacher canvas.
+- Updated teacher exit/end-session flow to clear active round pointers and turn learner answer pads off.
+- Updated learner terminal response gating to respect `room_memberships.can_answer` and finished-room state.
+- Updated Spec Kit spec/tasks/quickstart for live-session rejoin, auto-advance, learner-safe UI, and safe close validation.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run lint` attempted; blocked by known RTK/ESLint JSON wrapper issue: `ESLint output (JSON parse failed: EOF while parsing a value at line 1 column 0)`.
+- [x] GitHub preview workflow passed, including CI `npm run lint` and `npm run build`.
+- [x] Preview verified:
+  - `/` → 200, `assets/index-CUalHq_9.js`
+  - `/live-session` → 200, `assets/index-CUalHq_9.js`
+  - `/teacher` → 200, `assets/index-CUalHq_9.js`
+  - `/learner` → 200, `assets/index-CUalHq_9.js`
+  - `/settings` → 200, `assets/index-CUalHq_9.js`
+  - `/reports` → 200, `assets/index-CUalHq_9.js`
+- [x] Production workflow passed, including CI `npm run lint` and `npm run build`.
+- [x] Production verified:
+  - `/` → 200, `assets/index-CUalHq_9.js`
+  - `/live-session` → 200, `assets/index-CUalHq_9.js`
+  - `/teacher` → 200, `assets/index-CUalHq_9.js`
+  - `/learner` → 200, `assets/index-CUalHq_9.js`
+  - `/settings` → 200, `assets/index-CUalHq_9.js`
+  - `/reports` → 200, `assets/index-CUalHq_9.js`
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1317-live-auto-advance
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, verify https://chunks-offline.web.app and record the rollback in this log.
+
+### Notes / risks
+
+- Hosting-only release. No Supabase schema migration, data mutation, Storage change, or Firebase Function deploy included.
+- GitHub Actions emitted a Node.js 20 deprecation warning for `actions/checkout@v4` and `actions/setup-node@v4` being forced to Node.js 24 by the runner; deployment still passed.
+- Full two-browser teacher/learner manual validation remains tracked as Spec Kit task `T053`.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
