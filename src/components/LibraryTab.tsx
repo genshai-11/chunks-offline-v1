@@ -4,16 +4,15 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Course, Lesson, LessonSection, SentenceResource, CCIStandardCard, CVRUnit } from '../types';
+import { Course, Lesson, LessonSection, SentenceResource } from '../types';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
 import { generateResourceAudio } from '../lib/ttsService';
 import { getShortSentenceCode } from '../lib/resourceCode';
 import { 
   Plus, Check, Play, Edit2, Trash2, Globe, FileText, 
-  Volume2, Sliders, Hash, Shield, RefreshCw, AlertCircle,
-  BookOpen, GraduationCap, Layers, Mic, BarChart3, LayoutGrid, List as ListIcon,
-  ChevronDown, ChevronUp
+  Volume2, RefreshCw, AlertCircle,
+  BookOpen, GraduationCap, Layers, Mic, BarChart3, LayoutGrid, List as ListIcon
 } from 'lucide-react';
 
 interface LibraryTabProps {
@@ -22,8 +21,6 @@ interface LibraryTabProps {
   lessons: Lesson[];
   sections: LessonSection[];
   resources: SentenceResource[];
-  cciCards: CCIStandardCard[];
-  cvrUnits: CVRUnit[];
   onRefreshData: () => void;
 }
 
@@ -33,12 +30,9 @@ export default function LibraryTab({
   lessons,
   sections,
   resources,
-  cciCards,
-  cvrUnits,
   onRefreshData
 }: LibraryTabProps) {
-  // Navigation states
-  const [activeSubTab, setActiveSubTab] = useState<'resources' | 'standards'>('resources');
+  // Library now owns sentence resources only. CCI/CVR standards and categories live in Settings.
   
   // Selection filters for resources
   const [selectedCourseId, setSelectedCourseId] = useState<string>(courses[0]?.id || '');
@@ -61,9 +55,6 @@ export default function LibraryTab({
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(8);
-
-  // Guide expand/collapse state (default to hide)
-  const [showFormulaGuide, setShowFormulaGuide] = useState(false);
 
   // Reset pagination on filter or view mode change or itemsPerPage change
   useEffect(() => {
@@ -197,25 +188,6 @@ export default function LibraryTab({
   const [resCvr, setResCvr] = useState(1.0);
   const [resStatus, setResStatus] = useState<'draft' | 'approved' | 'archived'>('draft');
   const [resSectionId, setResSectionId] = useState('');
-
-  // Editing states for CCI / CVR
-  const [newCciLabel, setNewCciLabel] = useState('');
-  const [newCciValue, setNewCciValue] = useState(10);
-  const [newCciCategory, setNewCciCategory] = useState('pronunciation');
-
-  const [editingCciId, setEditingCciId] = useState<string | null>(null);
-  const [editCciLabel, setEditCciLabel] = useState('');
-  const [editCciValue, setEditCciValue] = useState(10);
-  const [editCciCategory, setEditCciCategory] = useState('pronunciation');
-
-  const [newCvrLabel, setNewCvrLabel] = useState('');
-  const [newCvrSymbol, setNewCvrSymbol] = useState('Ω');
-  const [newCvrValue, setNewCvrValue] = useState(1.0);
-
-  const [editingCvrId, setEditingCvrId] = useState<string | null>(null);
-  const [editCvrLabel, setEditCvrLabel] = useState('');
-  const [editCvrSymbol, setEditCvrSymbol] = useState('Ω');
-  const [editCvrValue, setEditCvrValue] = useState(1.0);
 
   // Active filter helper
   const filteredLessons = lessons.filter(l => l.course_id === selectedCourseId);
@@ -478,204 +450,6 @@ export default function LibraryTab({
     }
   };
 
-  // Save standard card (create or edit)
-  const handleSaveCci = (e: React.FormEvent) => {
-    e.preventDefault();
-    const isEdit = !!editingCciId;
-    const labelToSave = isEdit ? editCciLabel : newCciLabel;
-    const valueToSave = isEdit ? editCciValue : newCciValue;
-    const categoryToSave = isEdit ? editCciCategory : newCciCategory;
-
-    if (!labelToSave.trim()) return;
-
-    if (useSandbox) {
-      let cards = [...sandboxDb.cciStandardCards];
-      if (isEdit) {
-        cards = cards.map(c => c.id === editingCciId ? {
-          ...c,
-          label: labelToSave.trim(),
-          standard_value: Number(valueToSave),
-          category_id: categoryToSave,
-          updated_at: new Date().toISOString()
-        } : c);
-      } else {
-        cards.push({
-          id: "card_" + crypto.randomUUID().substring(0, 8),
-          category_id: categoryToSave,
-          label: labelToSave.trim(),
-          standard_value: Number(valueToSave),
-          active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-      }
-      sandboxDb.cciStandardCards = cards;
-      setNewCciLabel('');
-      setNewCciValue(10);
-      setEditingCciId(null);
-      onRefreshData();
-    } else {
-      const executeSaveCci = async () => {
-        try {
-          if (isEdit) {
-            const { error } = await supabase
-              .from('cci_standard_cards')
-              .update({
-                label: labelToSave.trim(),
-                standard_value: Number(valueToSave),
-                category_id: categoryToSave,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', editingCciId);
-            if (error) throw error;
-          } else {
-            const { error } = await supabase
-              .from('cci_standard_cards')
-              .insert([{
-                id: crypto.randomUUID(),
-                category_id: categoryToSave,
-                label: labelToSave.trim(),
-                standard_value: Number(valueToSave),
-                active: true,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              }]);
-            if (error) throw error;
-          }
-          setNewCciLabel('');
-          setNewCciValue(10);
-          setEditingCciId(null);
-          onRefreshData();
-        } catch (err: any) {
-          alert("Failed to save standard to Supabase: " + err.message);
-        }
-      };
-      executeSaveCci();
-    }
-  };
-
-  const handleDeleteCci = (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this CCI standard card?")) return;
-    if (useSandbox) {
-      sandboxDb.cciStandardCards = sandboxDb.cciStandardCards.filter(c => c.id !== id);
-      onRefreshData();
-    } else {
-      const executeDelete = async () => {
-        try {
-          const { error } = await supabase
-            .from('cci_standard_cards')
-            .delete()
-            .eq('id', id);
-          if (error) throw error;
-          onRefreshData();
-        } catch (err: any) {
-          alert("Failed to delete CCI standard: " + err.message);
-        }
-      };
-      executeDelete();
-    }
-  };
-
-  // Save CVR unit multiplier (create or edit)
-  const handleSaveCvr = (e: React.FormEvent) => {
-    e.preventDefault();
-    const isEdit = !!editingCvrId;
-    const labelToSave = isEdit ? editCvrLabel : newCvrLabel;
-    const symbolToSave = isEdit ? editCvrSymbol : newCvrSymbol;
-    const valueToSave = isEdit ? editCvrValue : newCvrValue;
-
-    if (!labelToSave.trim()) return;
-
-    if (useSandbox) {
-      let units = [...sandboxDb.cvrUnits];
-      if (isEdit) {
-        units = units.map(u => u.id === editingCvrId ? {
-          ...u,
-          label: labelToSave.trim(),
-          unit_symbol: symbolToSave.trim(),
-          value: Number(valueToSave),
-          updated_at: new Date().toISOString()
-        } : u);
-      } else {
-        units.push({
-          id: "unit_" + crypto.randomUUID().substring(0, 8),
-          label: labelToSave.trim(),
-          unit_symbol: symbolToSave.trim(),
-          value: Number(valueToSave),
-          active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-      }
-      sandboxDb.cvrUnits = units;
-      setNewCvrLabel('');
-      setNewCvrSymbol('Ω');
-      setNewCvrValue(1.0);
-      setEditingCvrId(null);
-      onRefreshData();
-    } else {
-      const executeSaveCvr = async () => {
-        try {
-          if (isEdit) {
-            const { error } = await supabase
-              .from('cvr_units')
-              .update({
-                label: labelToSave.trim(),
-                unit_symbol: symbolToSave.trim(),
-                value: Number(valueToSave),
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', editingCvrId);
-            if (error) throw error;
-          } else {
-            const { error } = await supabase
-              .from('cvr_units')
-              .insert([{
-                id: crypto.randomUUID(),
-                label: labelToSave.trim(),
-                unit_symbol: symbolToSave.trim(),
-                value: Number(valueToSave),
-                active: true,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              }]);
-            if (error) throw error;
-          }
-          setNewCvrLabel('');
-          setNewCvrSymbol('Ω');
-          setNewCvrValue(1.0);
-          setEditingCvrId(null);
-          onRefreshData();
-        } catch (err: any) {
-          alert("Failed to save CVR unit to Supabase: " + err.message);
-        }
-      };
-      executeSaveCvr();
-    }
-  };
-
-  const handleDeleteCvr = (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this CVR multiplier unit?")) return;
-    if (useSandbox) {
-      sandboxDb.cvrUnits = sandboxDb.cvrUnits.filter(u => u.id !== id);
-      onRefreshData();
-    } else {
-      const executeDelete = async () => {
-        try {
-          const { error } = await supabase
-            .from('cvr_units')
-            .delete()
-            .eq('id', id);
-          if (error) throw error;
-          onRefreshData();
-        } catch (err: any) {
-          alert("Failed to delete CVR unit: " + err.message);
-        }
-      };
-      executeDelete();
-    }
-  };
-
   // Queue missing audio job
   const handleQueueAudio = (resourceId: string, lang: 'en' | 'vi') => {
     if (useSandbox) {
@@ -705,33 +479,20 @@ export default function LibraryTab({
   return (
     <div className="space-y-6" id="library-tab">
       
-      {/* Sub tabs */}
-      <div className="flex border-b border-slate-200">
-        <button
-          onClick={() => setActiveSubTab('resources')}
-          className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
-            activeSubTab === 'resources' 
-              ? 'border-red-600 text-red-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          Sentence Library & Prompts
-        </button>
-        <button
-          onClick={() => setActiveSubTab('standards')}
-          className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
-            activeSubTab === 'standards' 
-              ? 'border-red-600 text-red-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          Scoring Standards (CCI & CVR Ω)
-        </button>
+      {/* Library owns curriculum resources. Standards moved to Settings → CCI & CVR Matrices. */}
+      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+        <div>
+          <h2 className="text-sm font-bold text-slate-800">Sentence Library & Prompts</h2>
+          <p className="text-xs text-slate-500 mt-1">CCI/CVR standards, CVR multipliers, and CCI categories are managed from Settings.</p>
+        </div>
+        <a href="/settings" className="text-[10px] font-bold text-red-600 hover:text-red-700 uppercase tracking-wider">
+          Open Settings Standards
+        </a>
       </div>
 
 
 
-      {activeSubTab === 'resources' ? (
+      {(
         <div className="space-y-6">
           
           {/* Horizontal Filter Bar */}
@@ -1473,357 +1234,6 @@ export default function LibraryTab({
                 )}
               </div>
             )}
-
-          </div>
-        </div>
-      ) : (
-        /* STANDARDS SUB-TAB */
-        <div className="space-y-6 animate-in fade-in duration-200">
-          
-          {/* CPD SCORING FORMULA GUIDE */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-md text-slate-100 relative overflow-hidden" id="cpd-formula-guide">
-            <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none select-none">
-              <BarChart3 className="w-64 h-64 text-white" />
-            </div>
-            
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2.5">
-                <span className="p-1.5 bg-red-500/10 rounded-lg shrink-0">
-                  <BarChart3 className="w-5 h-5 text-red-500" />
-                </span>
-                <div>
-                  <h3 className="font-sans font-bold text-sm text-white">Cumulative Performance Drilling (CPD) Scoring Formula</h3>
-                  <p className="text-[11px] text-slate-400">Oral assessment standard & live grading equations</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowFormulaGuide(!showFormulaGuide)}
-                className="flex items-center gap-1 px-3 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-200 hover:text-white rounded-lg text-xs font-semibold transition-all border border-slate-700/50"
-              >
-                {showFormulaGuide ? (
-                  <>
-                    Hide Formula <ChevronUp className="w-3.5 h-3.5" />
-                  </>
-                ) : (
-                  <>
-                    Expand Formula <ChevronDown className="w-3.5 h-3.5" />
-                  </>
-                )}
-              </button>
-            </div>
-
-            {showFormulaGuide && (
-              <div className="animate-in fade-in slide-in-from-top-1 duration-200">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-5 pt-4 border-t border-slate-800/80">
-                  {/* Formula 1: Simple Mode */}
-                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/50 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Simple Scoring Mode</span>
-                      <span className="px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded text-[9px] font-medium font-mono">Standard</span>
-                    </div>
-                    <div className="py-2 text-center bg-slate-900/60 rounded-lg my-1.5">
-                      <code className="text-sm font-bold text-red-400 font-mono">
-                        CPD = CCI * CVR
-                      </code>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Calculated by multiplying the resolved standard card value (<span className="text-slate-300 font-semibold">CCI = Performance % * Card X</span>) directly by the sentence difficulty coefficient (<span className="text-slate-300 font-semibold font-mono">CVR Ω</span>).
-                    </p>
-                  </div>
-
-                  {/* Formula 2: Timed Mode */}
-                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/50 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Timed Scoring Mode</span>
-                      <span className="px-1.5 py-0.5 bg-red-950 text-red-400 rounded text-[9px] font-medium font-mono">Speed Bonus</span>
-                    </div>
-                    <div className="py-2 text-center bg-slate-900/60 rounded-lg my-1.5">
-                      <code className="text-sm font-bold text-emerald-400 font-mono">
-                        CPD = CCI * CVR * (1 + TimeBonus / 10)
-                      </code>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Rewards rapid spoken responses. <span className="text-slate-300 font-semibold font-mono">TimeBonus = max(0, 10 - Reflection Seconds)</span>, granting up to <span className="text-emerald-400 font-bold">+100% extra score</span> for immediate responses (under 1 second).
-                    </p>
-                  </div>
-                </div>
-
-                {/* Parameter Glossary */}
-                <div className="mt-5 pt-4 border-t border-slate-800/80">
-                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Variables & Components</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-[11px]">
-                    <div className="space-y-0.5">
-                      <span className="font-mono text-slate-200 font-bold">CCI Standard X:</span>
-                      <p className="text-slate-400 leading-normal">Scoring card reference value (e.g. Pronunciation Standard = 10, Fluency = 15)</p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-mono text-slate-200 font-bold">Performance %:</span>
-                      <p className="text-slate-400 leading-normal">Host-graded speech accuracy ratio (0.00 to 1.00 based on standard metrics)</p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-mono text-slate-200 font-bold">Difficulty Ω (CVR):</span>
-                      <p className="text-slate-400 leading-normal">Unique sentence prompt difficulty coefficient (typically 0.5x, 1.0x, or 1.5x)</p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-mono text-slate-200 font-bold">Reflection Sec:</span>
-                      <p className="text-slate-400 leading-normal">Time elapsed between system challenge trigger and learner answer transmission</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            
-            {/* CCI Standard Cards */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h3 className="font-sans font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                  <Sliders className="w-4 h-4 text-red-600" />
-                  CCI Standard Cards
-                </h3>
-                <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                  {cciCards.length} Cards
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 leading-normal">
-                These are admin-defined scoring reference card values. A host chooses one when running a room. Spoken evaluations multiply by this reference value.
-              </p>
-
-              {/* Dynamic CCI Form (Create or Edit) */}
-              <form onSubmit={handleSaveCci} className={`p-3.5 rounded-lg border transition-colors grid grid-cols-1 sm:grid-cols-12 gap-3 ${
-                editingCciId ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'
-              }`}>
-                {editingCciId && (
-                  <div className="sm:col-span-12 flex justify-between items-center text-[10px] text-amber-800 font-bold uppercase pb-1 border-b border-amber-200/50">
-                    <span>Editing CCI Card Standard</span>
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        setEditingCciId(null);
-                        setEditCciLabel('');
-                        setEditCciValue(10);
-                        setEditCciCategory('pronunciation');
-                      }}
-                      className="text-slate-500 hover:text-slate-800 normal-case font-bold"
-                    >
-                      Cancel Edit
-                    </button>
-                  </div>
-                )}
-                
-                <div className="sm:col-span-4">
-                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">LABEL</label>
-                  <input 
-                    type="text"
-                    placeholder="Standard Label"
-                    value={editingCciId ? editCciLabel : newCciLabel}
-                    onChange={(e) => editingCciId ? setEditCciLabel(e.target.value) : setNewCciLabel(e.target.value)}
-                    className="w-full text-xs p-1.5 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none font-medium text-slate-800"
-                    required
-                  />
-                </div>
-                <div className="sm:col-span-3">
-                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">CATEGORY</label>
-                  <select
-                    value={editingCciId ? editCciCategory : newCciCategory}
-                    onChange={(e) => editingCciId ? setEditCciCategory(e.target.value) : setNewCciCategory(e.target.value)}
-                    className="w-full text-xs p-1.5 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700"
-                  >
-                    <option value="pronunciation">Pronunciation</option>
-                    <option value="fluency">Fluency</option>
-                    <option value="vocabulary">Vocabulary</option>
-                    <option value="grammar">Grammar</option>
-                  </select>
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">X VALUE</label>
-                  <input 
-                    type="number"
-                    value={editingCciId ? editCciValue : newCciValue}
-                    onChange={(e) => editingCciId ? setEditCciValue(Number(e.target.value)) : setNewCciValue(Number(e.target.value))}
-                    className="w-full text-xs p-1.5 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none font-medium text-slate-800"
-                    required
-                  />
-                </div>
-                <div className="sm:col-span-3 flex items-end">
-                  <button 
-                    type="submit"
-                    className={`w-full py-1.5 text-white rounded text-xs font-semibold transition-colors ${
-                      editingCciId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-900 hover:bg-slate-800'
-                    }`}
-                  >
-                    {editingCciId ? 'Save' : 'Add Card'}
-                  </button>
-                </div>
-              </form>
-
-              <div className="space-y-2 max-h-[300px] overflow-auto pr-1">
-                {cciCards.length === 0 ? (
-                  <div className="text-center py-6 text-slate-400 text-xs italic">No CCI standard cards defined.</div>
-                ) : (
-                  cciCards.map(c => (
-                    <div key={c.id} className="flex items-center justify-between p-3 border border-slate-100 bg-slate-50/40 rounded-xl hover:border-slate-200 hover:bg-slate-50/80 transition-all group">
-                      <div className="text-xs">
-                        <span className="font-semibold text-slate-800 block">{c.label}</span>
-                        <span className="text-[9px] font-bold text-slate-400 font-mono uppercase tracking-wider">{c.category_id}</span>
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 font-mono font-bold text-xs rounded-lg border border-emerald-200/50">
-                          X = {c.standard_value}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              setEditingCciId(c.id);
-                              setEditCciLabel(c.label);
-                              setEditCciValue(c.standard_value);
-                              setEditCciCategory(c.category_id);
-                            }}
-                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 rounded transition-all"
-                            title="Edit CCI Standard"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteCci(c.id)}
-                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
-                            title="Delete CCI Standard"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* CVR Multiplier Units */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h3 className="font-sans font-semibold text-sm text-slate-800 flex items-center gap-1.5">
-                  <Sliders className="w-4 h-4 text-indigo-600" />
-                  CVR Multipliers (Ω)
-                </h3>
-                <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                  {cvrUnits.length} Multipliers
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 leading-normal">
-                Sentence difficulty difficulty metrics (CVR Ω) are assigned per-prompt and directly amplify standard card performance scores to produce final CPD tallies.
-              </p>
-
-              {/* Dynamic CVR Form (Create or Edit) */}
-              <form onSubmit={handleSaveCvr} className={`p-3.5 rounded-lg border transition-colors grid grid-cols-1 sm:grid-cols-12 gap-3 ${
-                editingCvrId ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50 border-slate-200'
-              }`}>
-                {editingCvrId && (
-                  <div className="sm:col-span-12 flex justify-between items-center text-[10px] text-amber-800 font-bold uppercase pb-1 border-b border-amber-200/50">
-                    <span>Editing CVR Multiplier</span>
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        setEditingCvrId(null);
-                        setEditCvrLabel('');
-                        setEditCvrSymbol('Ω');
-                        setEditCvrValue(1.0);
-                      }}
-                      className="text-slate-500 hover:text-slate-800 normal-case font-bold"
-                    >
-                      Cancel Edit
-                    </button>
-                  </div>
-                )}
-                
-                <div className="sm:col-span-5">
-                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">LABEL</label>
-                  <input 
-                    type="text"
-                    placeholder="e.g. Intermediate Difficulty"
-                    value={editingCvrId ? editCvrLabel : newCvrLabel}
-                    onChange={(e) => editingCvrId ? setEditCvrLabel(e.target.value) : setNewCvrLabel(e.target.value)}
-                    className="w-full text-xs p-1.5 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none font-medium text-slate-800"
-                    required
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">SYMBOL</label>
-                  <input 
-                    type="text"
-                    value={editingCvrId ? editCvrSymbol : newCvrSymbol}
-                    onChange={(e) => editingCvrId ? setEditCvrSymbol(e.target.value) : setNewCvrSymbol(e.target.value)}
-                    className="w-full text-xs p-1.5 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none font-mono font-bold text-indigo-700 text-center"
-                    required
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">VALUE</label>
-                  <input 
-                    type="number"
-                    step="0.05"
-                    value={editingCvrId ? editCvrValue : newCvrValue}
-                    onChange={(e) => editingCvrId ? setEditCvrValue(Number(e.target.value)) : setNewCvrValue(Number(e.target.value))}
-                    className="w-full text-xs p-1.5 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 focus:outline-none font-medium text-slate-800"
-                    required
-                  />
-                </div>
-                <div className="sm:col-span-3 flex items-end">
-                  <button 
-                    type="submit"
-                    className={`w-full py-1.5 text-white rounded text-xs font-semibold transition-colors ${
-                      editingCvrId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-900 hover:bg-slate-800'
-                    }`}
-                  >
-                    {editingCvrId ? 'Save' : 'Add CVR'}
-                  </button>
-                </div>
-              </form>
-
-              <div className="space-y-2 max-h-[300px] overflow-auto pr-1">
-                {cvrUnits.length === 0 ? (
-                  <div className="text-center py-6 text-slate-400 text-xs italic">No CVR multipliers defined.</div>
-                ) : (
-                  cvrUnits.map(u => (
-                    <div key={u.id} className="flex items-center justify-between p-3 border border-slate-100 bg-slate-50/40 rounded-xl hover:border-slate-200 hover:bg-slate-50/80 transition-all group">
-                      <div className="text-xs">
-                        <span className="font-semibold text-slate-800 block">{u.label}</span>
-                        <span className="text-[10px] text-slate-400">Symbol: <span className="font-bold text-indigo-600 font-mono">{u.unit_symbol}</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-mono font-bold text-xs rounded-lg border border-indigo-200/50">
-                          Ω = {u.value}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              setEditingCvrId(u.id);
-                              setEditCvrLabel(u.label);
-                              setEditCvrSymbol(u.unit_symbol);
-                              setEditCvrValue(u.value);
-                            }}
-                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 rounded transition-all"
-                            title="Edit CVR Multiplier"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteCvr(u.id)}
-                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
-                            title="Delete CVR Multiplier"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
 
           </div>
         </div>

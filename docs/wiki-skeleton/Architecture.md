@@ -27,9 +27,9 @@ flowchart LR
 - `src/App.tsx`: app shell, routing, live data loading
 - `src/components/SimulatorTab.tsx`: Teacher Console/live rooms
 - `src/components/LearnerTerminalTab.tsx`: learner join/response UI
-- `src/components/SettingsTab.tsx`: learner roster/settings
-- `src/components/HistoryTab.tsx`: reports/history
-- `src/components/LibraryTab.tsx`: courses/materials
+- `src/components/SettingsTab.tsx`: learner roster/settings plus CCI category, CCI card, and CVR standards management
+- `src/components/HistoryTab.tsx`: reports/history with Session and Learner filters
+- `src/components/LibraryTab.tsx`: courses/materials/sentence resources only
 - `src/components/AudioGeneratorTab.tsx`: audio/TTS jobs
 
 ## Deployment flow

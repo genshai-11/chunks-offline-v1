@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
-import { CCIStandardCard, CVRUnit, CCIPerformanceParameter, Learner } from '../types';
+import { CCICategory, CCIStandardCard, CVRUnit, CCIPerformanceParameter, Learner } from '../types';
 import { REQUESTED_LEARNER_NAMES, findDuplicateLearnerNames, getMissingRequestedLearners, normalizeLearnerName } from '../lib/liveData';
 import { 
   Sliders, Edit2, Trash2, Plus, Settings2, SlidersHorizontal, 
@@ -60,6 +60,7 @@ function readLearnerUiSettings(): LearnerUiSettings {
 
 interface SettingsTabProps {
   useSandbox: boolean;
+  cciCategories: CCICategory[];
   cciCards: CCIStandardCard[];
   cvrUnits: CVRUnit[];
   learners: Learner[];
@@ -68,6 +69,7 @@ interface SettingsTabProps {
 
 export default function SettingsTab({
   useSandbox,
+  cciCategories,
   cciCards,
   cvrUnits,
   learners,
@@ -339,14 +341,22 @@ export default function SettingsTab({
     onRefreshData();
   };
 
+  // --- CCI Category State ---
+  const [standardsStatus, setStandardsStatus] = useState<string>('');
+  const [editingCciCategoryId, setEditingCciCategoryId] = useState<string | null>(null);
+  const [newCategoryId, setNewCategoryId] = useState<string>('');
+  const [newCategoryLabel, setNewCategoryLabel] = useState<string>('');
+  const [editCategoryId, setEditCategoryId] = useState<string>('');
+  const [editCategoryLabel, setEditCategoryLabel] = useState<string>('');
+
   // --- CCI State ---
   const [editingCciId, setEditingCciId] = useState<string | null>(null);
   const [newCciLabel, setNewCciLabel] = useState<string>('');
-  const [newCciCategory, setNewCciCategory] = useState<string>('M');
+  const [newCciCategory, setNewCciCategory] = useState<string>('');
   const [newCciValue, setNewCciValue] = useState<number>(10);
 
   const [editCciLabel, setEditCciLabel] = useState<string>('');
-  const [editCciCategory, setEditCciCategory] = useState<string>('M');
+  const [editCciCategory, setEditCciCategory] = useState<string>('');
   const [editCciValue, setEditCciValue] = useState<number>(10);
 
   // --- CVR State ---
@@ -383,7 +393,32 @@ export default function SettingsTab({
   const [mockCvrValue, setMockCvrValue] = useState<number>(1.5);
   const [mockReflectionSec, setMockReflectionSec] = useState<number>(3.5);
   const [learnerUiSettings, setLearnerUiSettings] = useState<LearnerUiSettings>(() => readLearnerUiSettings());
-  const cciCategoryOptions = Array.from(new Set(['M', 'S', 'E', ...cciCards.map(card => card.category_id).filter(Boolean)])).sort();
+  const activeCciCategories = useMemo(
+    () => cciCategories.filter(category => category.active !== false),
+    [cciCategories]
+  );
+  const selectedCciCategory = editingCciId ? editCciCategory : newCciCategory;
+  const cciCategoryOptions = Array.from(new Set([
+    ...activeCciCategories.map(category => category.id),
+    selectedCciCategory
+  ].filter(Boolean))).sort();
+  const cardCountByCategoryId = cciCards.reduce<Record<string, number>>((acc, card) => {
+    acc[card.category_id] = (acc[card.category_id] || 0) + 1;
+    return acc;
+  }, {});
+  const cardCategoriesMissingRows = Array.from(new Set(
+    cciCards
+      .map(card => card.category_id)
+      .filter(categoryId => categoryId && !cciCategories.some(category => category.id === categoryId))
+  )).sort();
+
+  useEffect(() => {
+    if (editingCciId || activeCciCategories.length === 0) return;
+    const hasCurrentCategory = activeCciCategories.some(category => category.id === newCciCategory);
+    if (!hasCurrentCategory) {
+      setNewCciCategory(activeCciCategories[0].id);
+    }
+  }, [activeCciCategories, editingCciId, newCciCategory]);
   const learnerLayoutLabels: Record<LearnerLayoutModule, string> = {
     summary: 'Summary Card',
     metadata: 'Active Turn Metadata',
@@ -431,6 +466,117 @@ export default function SettingsTab({
     }
   }, [performanceParams, mockSelectedParam]);
 
+  // --- CCI Category Mutation Handlers ---
+  const normalizeCategoryId = (value: string) => value.trim().replace(/\s+/g, '-');
+
+  const resetCategoryForm = () => {
+    setEditingCciCategoryId(null);
+    setEditCategoryId('');
+    setEditCategoryLabel('');
+    setNewCategoryId('');
+    setNewCategoryLabel('');
+  };
+
+  const handleSaveCciCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const isEdit = Boolean(editingCciCategoryId);
+    const originalId = editingCciCategoryId || '';
+    const idToSave = normalizeCategoryId(isEdit ? editCategoryId : newCategoryId);
+    const labelToSave = (isEdit ? editCategoryLabel : newCategoryLabel).trim() || idToSave;
+    if (!idToSave) return;
+
+    const executeSaveCategory = async () => {
+      try {
+        setStandardsStatus(isEdit ? 'Updating CCI category...' : 'Creating CCI category...');
+        if (useSandbox) {
+          const nextCategories = [...sandboxDb.cciCategories];
+          const existingIndex = nextCategories.findIndex(category => category.id === originalId || category.id === idToSave);
+          const nextCategory = {
+            id: idToSave,
+            label: labelToSave,
+            active: true,
+            created_at: existingIndex >= 0 ? nextCategories[existingIndex].created_at : new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          if (existingIndex >= 0) nextCategories[existingIndex] = nextCategory;
+          else nextCategories.push(nextCategory);
+          sandboxDb.cciCategories = nextCategories;
+          if (isEdit && originalId !== idToSave) {
+            sandboxDb.cciStandardCards = sandboxDb.cciStandardCards.map(card => card.category_id === originalId ? { ...card, category_id: idToSave, updated_at: new Date().toISOString() } : card);
+          }
+          resetCategoryForm();
+          setStandardsStatus(`Saved CCI category: ${idToSave}`);
+          onRefreshData();
+          return;
+        }
+
+        const { error: upsertError } = await supabase
+          .from('cci_categories')
+          .upsert({
+            id: idToSave,
+            label: labelToSave,
+            active: true,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'id' });
+        if (upsertError) throw upsertError;
+
+        if (isEdit && originalId !== idToSave) {
+          const { error: cardUpdateError } = await supabase
+            .from('cci_standard_cards')
+            .update({ category_id: idToSave, updated_at: new Date().toISOString() })
+            .eq('category_id', originalId);
+          if (cardUpdateError) throw cardUpdateError;
+
+          const { error: deleteOldError } = await supabase
+            .from('cci_categories')
+            .delete()
+            .eq('id', originalId);
+          if (deleteOldError) throw deleteOldError;
+        }
+
+        resetCategoryForm();
+        setStandardsStatus(`Saved CCI category: ${idToSave}`);
+        onRefreshData();
+      } catch (err: any) {
+        setStandardsStatus(`Could not save CCI category: ${err.message || String(err)}`);
+      }
+    };
+
+    void executeSaveCategory();
+  };
+
+  const handleDeleteCciCategory = (category: CCICategory) => {
+    const cardCount = cardCountByCategoryId[category.id] || 0;
+    const confirmMessage = cardCount > 0
+      ? `Delete CCI category ${category.id}? This will also delete ${cardCount} CCI standard card(s) in this category because the database relationship cascades.`
+      : `Delete CCI category ${category.id}?`;
+    if (!window.confirm(confirmMessage)) return;
+
+    const executeDeleteCategory = async () => {
+      try {
+        setStandardsStatus(`Deleting CCI category ${category.id}...`);
+        if (useSandbox) {
+          sandboxDb.cciCategories = sandboxDb.cciCategories.filter(item => item.id !== category.id);
+          sandboxDb.cciStandardCards = sandboxDb.cciStandardCards.filter(card => card.category_id !== category.id);
+          setStandardsStatus(`Deleted CCI category: ${category.id}`);
+          onRefreshData();
+          return;
+        }
+        const { error } = await supabase
+          .from('cci_categories')
+          .delete()
+          .eq('id', category.id);
+        if (error) throw error;
+        setStandardsStatus(`Deleted CCI category: ${category.id}`);
+        onRefreshData();
+      } catch (err: any) {
+        setStandardsStatus(`Could not delete CCI category: ${err.message || String(err)}`);
+      }
+    };
+
+    void executeDeleteCategory();
+  };
+
   // --- CCI Standard Card Mutation Handlers ---
   const handleSaveCci = (e: React.FormEvent) => {
     e.preventDefault();
@@ -440,6 +586,10 @@ export default function SettingsTab({
     const categoryToSave = (isEdit ? editCciCategory : newCciCategory).trim();
 
     if (!labelToSave.trim() || !categoryToSave) return;
+    if (!activeCciCategories.some(category => category.id === categoryToSave)) {
+      setStandardsStatus('Create the CCI category first, then assign cards to it.');
+      return;
+    }
 
     if (useSandbox) {
       let cards = [...sandboxDb.cciStandardCards];
@@ -465,22 +615,12 @@ export default function SettingsTab({
       sandboxDb.cciStandardCards = cards;
       setNewCciLabel('');
       setNewCciValue(10);
-      setNewCciCategory('M');
+      setNewCciCategory(activeCciCategories[0]?.id || '');
       setEditingCciId(null);
       onRefreshData();
     } else {
       const executeSaveCci = async () => {
         try {
-          const { error: categoryError } = await supabase
-            .from('cci_categories')
-            .upsert({
-              id: categoryToSave,
-              label: categoryToSave,
-              active: true,
-              updated_at: new Date().toISOString()
-            }, { onConflict: 'id' });
-          if (categoryError) throw categoryError;
-
           if (isEdit) {
             const { error } = await supabase
               .from('cci_standard_cards')
@@ -508,7 +648,7 @@ export default function SettingsTab({
           }
           setNewCciLabel('');
           setNewCciValue(10);
-          setNewCciCategory('M');
+          setNewCciCategory(activeCciCategories[0]?.id || '');
           setEditingCciId(null);
           onRefreshData();
         } catch (err: any) {
@@ -1041,6 +1181,112 @@ export default function SettingsTab({
       {activeSettingsSubtab === 'cci_cvr' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fadeIn" id="cci-cvr-settings-partition">
           
+          {/* Full-width CCI Category Manager */}
+          <div className="lg:col-span-12 bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <Sliders className="w-4 h-4 text-red-600" />
+                  CCI Categories Manager
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Categories are now managed here in Settings and used by CCI Standard Cards. Library no longer owns standards/category CRUD.
+                </p>
+              </div>
+              <span className="text-[10px] font-mono font-bold bg-slate-50 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
+                {activeCciCategories.length} active categories
+              </span>
+            </div>
+
+            {standardsStatus && (
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-900 font-semibold">
+                {standardsStatus}
+              </div>
+            )}
+
+            {cardCategoriesMissingRows.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <strong>Category drift detected:</strong> these card category IDs do not exist in `cci_categories`: {cardCategoriesMissingRows.join(', ')}. Create or edit categories here so cards stop depending on stale category values.
+              </div>
+            )}
+
+            <form onSubmit={handleSaveCciCategory} className={`grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-xl border ${editingCciCategoryId ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/70 border-slate-200'}`}>
+              {editingCciCategoryId && (
+                <div className="md:col-span-12 flex items-center justify-between border-b border-amber-200/60 pb-2 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                  <span>Editing category: {editingCciCategoryId}</span>
+                  <button type="button" onClick={resetCategoryForm} className="text-slate-500 hover:text-slate-800 normal-case">Cancel</button>
+                </div>
+              )}
+              <div className="md:col-span-4 space-y-1">
+                <label className="text-[9px] font-bold text-slate-400 uppercase">Category ID / Code</label>
+                <input
+                  value={editingCciCategoryId ? editCategoryId : newCategoryId}
+                  onChange={(e) => editingCciCategoryId ? setEditCategoryId(e.target.value) : setNewCategoryId(e.target.value)}
+                  placeholder="e.g. M, S, E, fluency"
+                  className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none font-black text-slate-800"
+                  required
+                />
+              </div>
+              <div className="md:col-span-5 space-y-1">
+                <label className="text-[9px] font-bold text-slate-400 uppercase">Category Label</label>
+                <input
+                  value={editingCciCategoryId ? editCategoryLabel : newCategoryLabel}
+                  onChange={(e) => editingCciCategoryId ? setEditCategoryLabel(e.target.value) : setNewCategoryLabel(e.target.value)}
+                  placeholder="e.g. Meaning, Structure, Expression"
+                  className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none font-semibold text-slate-800"
+                />
+              </div>
+              <div className="md:col-span-3 flex items-end">
+                <button type="submit" className={`w-full py-2 text-white rounded-lg text-xs font-bold transition-all ${editingCciCategoryId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-900 hover:bg-slate-800'}`}>
+                  {editingCciCategoryId ? 'Update Category' : 'Add Category'}
+                </button>
+              </div>
+            </form>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {activeCciCategories.length === 0 ? (
+                <div className="md:col-span-2 xl:col-span-3 text-center py-6 text-slate-400 text-xs italic border border-dashed border-slate-200 rounded-xl">
+                  No CCI categories found. Add M / S / E or your preferred category set here first.
+                </div>
+              ) : activeCciCategories.map(category => {
+                const cardCount = cardCountByCategoryId[category.id] || 0;
+                return (
+                  <div key={category.id} className="rounded-xl border border-slate-100 bg-slate-50/70 p-3 flex items-center justify-between gap-3 group">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-black text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded">{category.id}</span>
+                        <span className="text-[10px] font-bold text-slate-400">{cardCount} card{cardCount === 1 ? '' : 's'}</span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-800 truncate mt-1">{category.label}</div>
+                    </div>
+                    <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingCciCategoryId(category.id);
+                          setEditCategoryId(category.id);
+                          setEditCategoryLabel(category.label);
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 rounded-lg transition-all"
+                        title="Edit category"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCciCategory(category)}
+                        className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        title="Delete category"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Column Left: CCI Standards */}
           <div className="lg:col-span-6 bg-white border border-slate-200 rounded-2xl p-6 shadow-2xs space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -1071,7 +1317,7 @@ export default function SettingsTab({
                       setEditingCciId(null);
                       setEditCciLabel('');
                       setEditCciValue(10);
-                      setEditCciCategory('M');
+                      setEditCciCategory('');
                     }}
                     className="text-[10px] text-slate-400 hover:text-slate-800 font-bold"
                   >
@@ -1095,28 +1341,18 @@ export default function SettingsTab({
 
                 <div className="sm:col-span-7">
                   <label className="text-[9px] font-bold text-slate-400 uppercase">Scoring Rubric Category</label>
-                  <div className="grid grid-cols-[110px_1fr] gap-2">
-                    <select
-                      value={editingCciId ? editCciCategory : newCciCategory}
-                      onChange={(e) => editingCciId ? setEditCciCategory(e.target.value) : setNewCciCategory(e.target.value)}
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700 font-black"
-                    >
-                      {cciCategoryOptions.map(category => (
-                        <option key={category} value={category}>{category}</option>
-                      ))}
-                    </select>
-                    <input
-                      list="cci-category-options"
-                      value={editingCciId ? editCciCategory : newCciCategory}
-                      onChange={(e) => editingCciId ? setEditCciCategory(e.target.value.toUpperCase()) : setNewCciCategory(e.target.value.toUpperCase())}
-                      placeholder="M, S, E, or custom"
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700 font-semibold"
-                    />
-                  </div>
-                  <datalist id="cci-category-options">
-                    {cciCategoryOptions.map(category => <option key={category} value={category} />)}
-                  </datalist>
-                  <p className="text-[9px] text-slate-400 mt-1">Use M / S / E by default. You can type a new category code when needed.</p>
+                  <select
+                    value={editingCciId ? editCciCategory : newCciCategory}
+                    onChange={(e) => editingCciId ? setEditCciCategory(e.target.value) : setNewCciCategory(e.target.value)}
+                    className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700 font-black"
+                    required
+                  >
+                    <option value="" disabled>Create/select a category first</option>
+                    {cciCategoryOptions.map(category => (
+                      <option key={category} value={category}>{category}</option>
+                    ))}
+                  </select>
+                  <p className="text-[9px] text-slate-400 mt-1">Cards can only use categories created in the CCI Categories Manager above.</p>
                 </div>
 
                 <div className="sm:col-span-5">

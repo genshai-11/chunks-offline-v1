@@ -13,7 +13,8 @@ Chunks Offline is a live classroom app for teacher-controlled oral response prac
 - Learner Terminal response flow
 - Durable learner roster and progress tracking by `learners.id`
 - Library/course/lesson/section/sentence resources
-- Reports/history by learner and live-room data
+- Settings-owned CCI categories, CCI Standard Cards, and CVR standards management
+- Reports/history by session, learner, and live-room data
 - Audio/TTS workflow and schema health visibility
 
 ## Current active product principles

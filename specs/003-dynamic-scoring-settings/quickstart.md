@@ -12,11 +12,13 @@ npm run dev
 
 1. Open `/settings`.
 2. Open CCI & CVR section.
-3. Confirm category choices include M, S, E.
-4. Confirm a category can be typed/added in the card form.
-5. Save a test card only if operating in a safe test scope.
+3. Confirm CCI Categories Manager is visible above CCI Standard Cards.
+4. Create or edit a category in the category manager only if operating in a safe test scope.
+5. Confirm the CCI card category field only lists managed categories and no longer allows free-typing new categories from the card form.
+6. Save a test card only if operating in a safe test scope.
+7. Open `/library` and confirm Standards/CCI/CVR CRUD is no longer exposed there.
 
-Expected: Settings supports M/S/E and dynamic category entry without crashing.
+Expected: Settings is the source of truth for CCI categories/cards/CVR units; Library remains sentence-resource only.
 
 ## Scenario 2: Formula label and preview
 
@@ -46,7 +48,7 @@ Expected: Request remains backward-compatible and includes preferences when conf
 ## Scenario 5: Learner-focused chart
 
 1. Open `/reports`.
-2. Filter to a learner with many responses.
+2. Filter by Session and Learner.
 3. Switch chart order to Round, CVR ascending, and CCI Standard ascending.
 4. Hover points.
 

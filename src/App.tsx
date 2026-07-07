@@ -8,7 +8,7 @@ import { supabase } from './lib/supabaseClient';
 import { checkSchemaHealth, SchemaHealthResult } from './lib/schemaHealth';
 import { 
   Course, Lesson, LessonSection, SentenceResource, 
-  CCIStandardCard, CVRUnit, PracticeRoom, RoomRound, 
+  CCICategory, CCIStandardCard, CVRUnit, PracticeRoom, RoomRound, 
   LearnerResponse, LearnerProgress, AudioGenerationJob, Learner 
 } from './types';
 
@@ -117,14 +117,14 @@ const navItems = [
   },
   {
     id: 'library' as AppTab,
-    label: 'Library & Standards',
+    label: 'Library',
     shortLabel: 'Library',
     icon: FolderOpen,
-    description: 'Manage items & standard curriculum',
+    description: 'Browse curriculum resources and sentence prompts',
     options: [
       { label: 'Curriculum View', desc: 'Browse courses & lessons' },
-      { label: 'CCI Standard Cards', desc: 'Manage benchmark rubrics' },
-      { label: 'CVR Word Units', desc: 'Define lexical evaluation chunks' }
+      { label: 'Sentence Prompts', desc: 'Manage classroom sentence resources' },
+      { label: 'Audio Coverage', desc: 'Check EN/VI prompt audio status' }
     ]
   },
   {
@@ -190,6 +190,7 @@ export default function App() {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [sections, setSections] = useState<LessonSection[]>([]);
   const [resources, setResources] = useState<SentenceResource[]>([]);
+  const [cciCategories, setCciCategories] = useState<CCICategory[]>([]);
   const [cciCards, setCciCards] = useState<CCIStandardCard[]>([]);
   const [cvrUnits, setCvrUnits] = useState<CVRUnit[]>([]);
   const [rooms, setRooms] = useState<PracticeRoom[]>([]);
@@ -274,6 +275,7 @@ export default function App() {
         dbCoursesResult,
         dbLessonsResult,
         dbSectionsResult,
+        dbCciCategoriesResult,
         dbCciCardsResult,
         dbCvrUnitsResult,
         dbRoomsResult,
@@ -285,6 +287,7 @@ export default function App() {
         supabase.from('courses').select('*'),
         supabase.from('lessons').select('*').order('order_index', { ascending: true }),
         supabase.from('lesson_sections').select('*').order('order_index', { ascending: true }),
+        supabase.from('cci_categories').select('*').order('id', { ascending: true }),
         supabase.from('cci_standard_cards').select('*'),
         supabase.from('cvr_units').select('*'),
         supabase.from('practice_rooms').select('*'),
@@ -298,6 +301,7 @@ export default function App() {
       const dbLessons = capture('lessons', dbLessonsResult);
       const dbSections = capture('lesson_sections', dbSectionsResult);
       const dbResources = await fetchAllSentenceResources();
+      const dbCciCategories = capture('cci_categories', dbCciCategoriesResult);
       const dbCciCards = capture('cci_standard_cards', dbCciCardsResult);
       const dbCvrUnits = capture('cvr_units', dbCvrUnitsResult);
       const dbRooms = capture('practice_rooms', dbRoomsResult);
@@ -310,6 +314,7 @@ export default function App() {
       setLessons((dbLessons || []) as Lesson[]);
       setSections((dbSections || []) as LessonSection[]);
       setResources((dbResources || []) as SentenceResource[]);
+      setCciCategories((dbCciCategories || []) as CCICategory[]);
       setCciCards((dbCciCards || []) as CCIStandardCard[]);
       setCvrUnits((dbCvrUnits || []) as CVRUnit[]);
       setRooms((dbRooms || []) as PracticeRoom[]);
@@ -515,8 +520,6 @@ export default function App() {
                 lessons={lessons}
                 sections={sections}
                 resources={resources}
-                cciCards={cciCards}
-                cvrUnits={cvrUnits}
                 onRefreshData={reloadDatabaseState}
               />
             )}
@@ -580,6 +583,7 @@ export default function App() {
             {activeTab === 'settings' && (
               <SettingsTab
                 useSandbox={useSandbox}
+                cciCategories={cciCategories}
                 cciCards={cciCards}
                 cvrUnits={cvrUnits}
                 learners={learners}

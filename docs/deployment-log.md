@@ -589,6 +589,121 @@ where sr.id = rollback.id::uuid;
 
 ---
 
+## 2026-07-07 13:42 GMT+7 — Supabase session data reset and tuned Test Session 01 reseed
+
+**Operator**: Lucy with Craft Agent  
+**Supabase project**: `ftfxekdxeoxizoyxuqoz`  
+**Course**: `EREL-level-B`  
+**Lesson**: `19. Farewell party` (`57196c7b-4a77-50d9-aca3-c2d7005da29d`)  
+**Hosting deploy**: Not applicable; data-only update.
+
+### Scope
+
+- Deleted existing live session/round data from:
+  - `public.learner_progress`
+  - `public.learner_responses`
+  - `public.room_rounds`
+  - `public.room_memberships`
+  - `public.practice_rooms`
+- Recreated a single seeded room: `TEST SESSION 01` / `CH-9001`.
+- Added all 10 active learners to the room.
+- Seeded 380 closed rounds and 380 finalized learner responses with uneven per-learner counts:
+  - Annie 30
+  - Cherry 32
+  - Cy 34
+  - Jay 36
+  - Lucy 38
+  - Mason 40
+  - Pen 42
+  - Tailor 44
+  - Vox 45
+  - Wynnye 39
+- Tuned the seed so several learners show a much clearer learner-level pattern of higher CVR + higher CCI difficulty causing higher red-grade probability over time.
+
+### Validation
+
+- [x] Confirmed 10 active learners before reseed.
+- [x] Deleted prior session data successfully.
+- [x] Seeded 10 room memberships, 380 room rounds, and 380 learner responses.
+- [x] Finalized all rounds to `closed` and rebuilt 10 `learner_progress` rows.
+- [x] Verified grade mix after tuned seed:
+  - Red: 211
+  - Yellow: 59
+  - Green: 110
+- [x] Verified learner-level summaries showed steeper high-CVR/high-CCI profiles for several learners:
+  - Wynnye → 39 responses, 82.1% red, avg CVR 9.23, avg CCI X 13.08
+  - Vox → 45 responses, 77.8% red, avg CVR 9.20, avg CCI X 13.11
+  - Tailor → 44 responses, 68.2% red, avg CVR 9.14, avg CCI X 12.95
+  - Jay → 36 responses, 22.2% red, avg CVR 5.97, avg CCI X 7.64
+  - Cherry → 32 responses, 28.1% red, avg CVR 5.97, avg CCI X 7.66
+- [x] Verified all seeded room rounds are now `closed`.
+
+### Rollback
+
+This change intentionally destroyed prior live session history. Exact pre-reset room/round/response data cannot be restored from application tables after the delete.
+
+If previous live history must be recovered, restore the Supabase database from backup/PITR to a point before **2026-07-07 13:42 GMT+7**.
+
+If only the seeded test room must be removed, delete the current seeded session data with:
+
+```sql
+delete from public.learner_progress;
+delete from public.learner_responses;
+delete from public.room_rounds;
+delete from public.room_memberships;
+delete from public.practice_rooms where title = 'TEST SESSION 01';
+```
+
+### Notes / risks
+
+- Data-only Supabase update; no Firebase Hosting deploy, Supabase schema migration, or Firebase Function deploy included.
+- The seeded response model uses only `red`, `yellow`, and `green` because the current database submission workflow does not accept `purple` through `submit_room_response`.
+- This entry supersedes the earlier same-session 380-response seed with a stronger learner-level CVR→red relationship.
+
+---
+
+## 2026-07-07 13:43 GMT+7 — Supabase topic 19 Farewell party English audio URL cleanup
+
+**Operator**: Lucy with Craft Agent  
+**Supabase project**: `ftfxekdxeoxizoyxuqoz`  
+**Course**: `EREL-level-B`  
+**Lesson**: `19. Farewell party` (`57196c7b-4a77-50d9-aca3-c2d7005da29d`)  
+**Hosting deploy**: Not applicable; data-only update.
+
+### Scope
+
+- Cleared `public.sentence_resources.audio_en_url` for all 70 topic-19 resources.
+- Preserved `audio_vi_url` and `audio_url` values.
+- Did not delete storage objects; only the DB URL field was nulled.
+
+### Validation
+
+- [x] Confirmed topic 19 contains 70 resources before update.
+- [x] Confirmed topic 19 had 70 non-null `audio_en_url` values before update.
+- [x] Cleared exactly 70 `audio_en_url` values.
+- [x] Verified topic 19 post-update counts:
+  - `audio_en_url`: 0
+  - `audio_vi_url`: 70
+  - `audio_url`: 70
+
+### Rollback
+
+Restore the prior deterministic English audio URLs with:
+
+```sql
+update public.sentence_resources
+set audio_en_url = 'https://ftfxekdxeoxizoyxuqoz.supabase.co/storage/v1/object/public/resource-audio/audio/generated/' || replace(sentence_code, '-', '_') || '.en.mp3',
+    updated_at = now()
+where lesson_id = '57196c7b-4a77-50d9-aca3-c2d7005da29d';
+```
+
+### Notes / risks
+
+- Data-only Supabase update; no Firebase Hosting deploy, Supabase schema migration, or Firebase Function deploy included.
+- This update removes English-audio URLs from topic 19 resources at the database level but does not remove the underlying storage files.
+
+---
+
 ## 2026-07-07 14:25 GMT+7 — Live session rejoin and safe close Hosting release
 
 **Operator**: Lucy with Craft Agent  
@@ -792,6 +907,57 @@ After rollback, verify https://chunks-offline.web.app and record the rollback in
 - Browser-level manual validation should confirm teacher preference behavior for both toggles: auto on and manual-only off.
 
 ---
+
+## 2026-07-07 15:40 GMT+7 — Moved standards to Settings and Library tab cleanup
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `56e9ae3`  
+**Tag**: `firebase-hosting-20260707-1540-settings-standards`  
+**Preview URL**: https://chunks-offline--preview-local-mpqkh436.web.app  
+**Production URL/version**: https://chunks-offline.web.app  
+
+### Scope
+
+- Moved CCI categories, CCI standard cards, and CVR standard cards fully to Settings.
+- Added CCI Categories Manager in Settings supporting full CRUD (create, edit, delete) of `cci_categories`.
+- Restricted CCI standard cards to assignable managed categories only (removed old free-typed category behavior).
+- Cleaned up Library tab, removing CCI/CVR sub-tabs and handlers, leaving it sentence/resource-only.
+- Updated Navigation label to 'Library' (previously 'Library & Standards').
+- Refactored `App.tsx` to load `cci_categories` from Supabase and pass them into `SettingsTab.tsx`.
+- Updated Progress Report in History tab: changed filters to use "Session" and "Learner" wording, added Grade subfilter buttons, and hid the irrelevant custom chart builder/custom-field canvas.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run lint` checked.
+- [x] Local `npm run deploy:preview` channel deployed and verified: https://chunks-offline--preview-local-mpqkh436.web.app
+  - Nav label is "Library"
+  - Settings shows "CCI Categories Manager" with CRUD and CCI standard cards using managed categories.
+  - History shows "Session" + "Learner" and hides custom chart builder.
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1458-live-audio-controls
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+### Notes / risks
+
+- Hosting-only release. No database schema migration or function update required since `cci_categories` table is already in place.
+- Ensure that active CCI cards are properly mapped to existing categories or new categories are created for them.
+
+---
+
 
 ## Template for future entries
 

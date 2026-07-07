@@ -10,8 +10,8 @@
 
 ## Phase 2: Settings and scoring UI foundation
 
-- [x] T004 [US1] Update CCI category defaults and form state in `src/components/SettingsTab.tsx` to use M/S/E
-- [x] T005 [US1] Add dynamic category input/select behavior in `src/components/SettingsTab.tsx`
+- [x] T004 [US1] Update CCI category/card state in `src/components/SettingsTab.tsx` to use managed `cci_categories` rows
+- [x] T005 [US1] Add CCI category create/edit/delete behavior in `src/components/SettingsTab.tsx` and lock cards to managed categories
 - [x] T006 [US2] Remove Chinese realtime formula text in `src/components/SettingsTab.tsx` and `src/components/LearnerTerminalTab.tsx`
 - [x] T007 [US2] Add local CPD formula preview settings in `src/components/SettingsTab.tsx`
 - [x] T008 [US3] Add learner layout order settings and move controls in `src/components/SettingsTab.tsx`
@@ -28,10 +28,12 @@
 - [x] T013 [US5] Add learner sentence chart state and data model in `src/components/HistoryTab.tsx`
 - [x] T014 [US5] Render learner-focused sentence timeline chart by round/CVR/CCI in `src/components/HistoryTab.tsx`
 - [x] T015 [US5] Add point tooltip/labels showing sentence code, CPD, CVR, CCI, and grade color in `src/components/HistoryTab.tsx`
+- [x] T015a [US5] Label Progress Report filters as Session/Learner and hide irrelevant custom chart-field canvas
 
 ## Phase 5: Navigation and DB migration
 
 - [x] T016 Rename navigation label `Config Settings` to `Setting` in `src/App.tsx`
+- [x] T016a Move CCI/CVR standards management out of Library and keep Library sentence-resource only
 - [x] T017 [US1] If Lucy confirms, apply FK-safe Supabase migration to upsert M/S/E categories and update/seed cards
 - [x] T018 [US1] Verify Supabase CCI categories/cards after DB change
 

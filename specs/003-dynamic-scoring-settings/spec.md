@@ -9,17 +9,18 @@
 
 ### User Story 1 - Manage CCI standard categories and cards safely (Priority: P1)
 
-An operator can use Settings to manage CCI Standard Cards under the simplified categories M, S, and E, and can add or edit the category field directly rather than being forced into a fixed select-only list.
+An operator can use Settings to manage CCI Categories and CCI Standard Cards from one place. Categories are explicit `cci_categories` rows created/edited/deleted in Settings, and cards can only be assigned to managed categories instead of deriving category choices from old resources/cards or free-typed card values.
 
 **Why this priority**: CCI Standard X is core scoring input. Incorrect category/card management can break teacher launch and historical reports.
 
-**Independent Test**: Open Settings, view CCI/CVR matrices, confirm category options include M, S, E, add or edit a standard card category, and confirm live data refreshes without exposing learner screens.
+**Independent Test**: Open Settings, view CCI/CVR matrices, create/edit/delete a CCI category, assign a CCI card to an existing category, and confirm live data refreshes without exposing learner screens.
 
 **Acceptance Scenarios**:
 
-1. **Given** Settings is open, **When** the operator creates or edits a CCI card, **Then** the category can be selected from M/S/E or typed as a new safe category value.
-2. **Given** existing cards are referenced by classroom rounds, **When** the system replaces categories/cards, **Then** rollback instructions and FK-safe behavior preserve report history.
-3. **Given** CCI categories are simplified, **When** the operator views the card list, **Then** category labels are readable and no legacy category-only workflow is required.
+1. **Given** Settings is open, **When** the operator creates or edits a CCI category, **Then** the category is stored in `cci_categories` and appears as an assignable CCI card category.
+2. **Given** Settings is open, **When** the operator creates or edits a CCI card, **Then** the card category must be selected from managed active categories and cannot be created implicitly from the card form.
+3. **Given** Library is open, **When** the operator searches for standards management, **Then** Library only shows sentence resources and points operators to Settings for CCI/CVR/category CRUD.
+4. **Given** existing cards are referenced by classroom rounds, **When** the system replaces categories/cards, **Then** rollback instructions and FK-safe behavior preserve report history.
 
 ### User Story 2 - Configure scoring display and CPD formula behavior (Priority: P1)
 
@@ -88,8 +89,8 @@ A teacher can view per-learner sentence/round progress over time and sort the ch
 
 ### Functional Requirements
 
-- **FR-001**: System MUST support CCI Standard Card categories M, S, and E in Settings.
-- **FR-002**: System MUST allow operators to add or edit CCI card category values from the Settings form, not only choose a fixed legacy value.
+- **FR-001**: System MUST support CCI Category CRUD in Settings using live `cci_categories` rows.
+- **FR-002**: System MUST require CCI Standard Cards to use managed active categories from Settings rather than free-typed or card-derived category values.
 - **FR-003**: System MUST protect historical round/report references before replacing existing CCI card records.
 - **FR-004**: System MUST remove Chinese text from realtime formula labels and use “Real-Time Calculation Logic”.
 - **FR-005**: System MUST provide configurable CPD formula preview controls in Settings.
@@ -105,7 +106,7 @@ A teacher can view per-learner sentence/round progress over time and sort the ch
 
 ### Key Entities
 
-- **CCI Category**: A rubric group label such as M, S, or E.
+- **CCI Category**: A managed rubric group row in `cci_categories` with an ID/code, label, and active state.
 - **CCI Standard Card**: A standard X value used when
  rounds are opened and responses are scored.
 - **CPD Formula Settings**: Local configuration for previewing the CPD equation.
@@ -115,7 +116,7 @@ A teacher can view per-learner sentence/round progress over time and sort the ch
 
 ## Success Criteria
 
-- **SC-001**: Operators can create or edit a CCI card using M/S/E category in under 30 seconds.
+- **SC-001**: Operators can create or edit a CCI category and assign a CCI card to that managed category in under 60 seconds.
 - **SC-002**: Realtime formula labels contain zero Chinese text in Settings and learner preview.
 - **SC-003**: Operators can reorder at least five learner preview modules and see the new order immediately.
 - **SC-004**: TTS generation requests include provider/model/voice preferences when configured.
@@ -127,3 +128,4 @@ A teacher can view per-learner sentence/round progress over time and sort the ch
 - The first release stores formula, layout, and TTS preferences in browser localStorage unless a later DB-backed admin settings table is approved.
 - Existing response formulas remain historical records; formula settings initially affect preview/request behavior only.
 - CCI category replacement should prefer FK-safe update/seed behavior over hard deletion of referenced cards unless Lucy explicitly confirms hard delete with history impact.
+- Library is sentence-resource only; CCI/CVR standards and CCI categories are managed from Settings.
