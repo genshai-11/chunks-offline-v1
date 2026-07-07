@@ -6,6 +6,7 @@ This page is an index/summary only. Always update `docs/deployment-log.md` for a
 
 ## Recent important releases
 
+- Live auto-advance controls and dynamic scoring settings release: auto-opens next turn after first response, adds keyboard prompt controls, and deploys M/S/E scoring settings UI.
 - Live room next-turn response flow release: after first response capture, the teacher console shows the next speaker prompt instead of a stale waiting state.
 - Reports audit table and RFC/RAC custom fields release.
 - Firebase Hosting setup and CI/CD

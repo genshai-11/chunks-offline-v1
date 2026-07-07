@@ -457,6 +457,70 @@ commit;
 
 ---
 
+## 2026-07-07 13:17 GMT+7 — Live auto-advance controls and dynamic scoring settings release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `06bc597`  
+**Tag**: `firebase-hosting-20260707-1317-live-auto-advance`  
+**Preview URL**: <https://chunks-offline--pr-4-1m3px3jc.web.app>  
+**Production URL/version**: <https://chunks-offline.web.app> served `assets/index-NrUGWek4.js`  
+**CI workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28845660746>  
+**Preview workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28845840982>  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28845907968>
+
+### Scope
+
+- Deploy dynamic scoring settings controls from `a02450b`, including M/S/E CCI settings UI, formula/layout/TTS controls, learner analytics updates, and related Wiki skeleton sync.
+- Deploy live room auto-advance improvements from `06bc597`:
+  - after first-response capture, close the captured round and auto-open the next turn in sequence;
+  - auto-play the next open turn when **Auto-play on launch** is enabled;
+  - add Space replay and ArrowRight next-turn keyboard shortcuts;
+  - show EN/VI teacher prompt text below next-turn speaker preview;
+  - show per-roster learner response counts.
+- Include the previously logged FK-safe Supabase CCI M/S/E migration in the release context; no new Supabase write was performed during this Hosting release.
+
+### Validation
+
+- [x] `npx tsc --noEmit` passed locally before commit `06bc597`.
+- [x] `npm run build` passed locally before commit `06bc597`.
+- [x] `npm run lint` hit the known local wrapper JSON parse issue; GitHub CI validation passed.
+- [x] GitHub CI passed for commit `06bc597`.
+- [x] Firebase preview verified: `/`, `/settings`, `/reports`, and `/learner` returned HTTP 200 and app shell.
+- [x] Production verified: `/`, `/settings`, `/reports`, and `/learner` returned HTTP 200 and served `assets/index-NrUGWek4.js`.
+
+### Rollback
+
+Preferred Hosting rollback: Firebase Console → project `chunks-offline` → Hosting → site `chunks-offline` → Release history → rollback to previous known-good release.
+
+Git tag redeploy rollback:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1249-live-next-turn
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, return to main:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+If CCI M/S/E data must also be rolled back, use the rollback SQL recorded in the 2026-07-07 12:56 GMT+7 Supabase CCI categories M/S/E migration entry.
+
+### Notes / risks
+
+- Hosting-only release; no Supabase migration or Firebase Function deploy was executed in this release.
+- Production release was tag-gated and deployed from GitHub Actions clean checkout.
+- GitHub Actions emitted the existing Node.js 20 deprecation annotation for upstream actions, but workflows completed successfully.
+- Bundle size warning remains non-blocking and should be handled later with route/code splitting.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
