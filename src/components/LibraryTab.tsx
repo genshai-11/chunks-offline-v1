@@ -8,6 +8,7 @@ import { Course, Lesson, LessonSection, SentenceResource, CCIStandardCard, CVRUn
 import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
 import { generateResourceAudio } from '../lib/ttsService';
+import { getShortSentenceCode } from '../lib/resourceCode';
 import { 
   Plus, Check, Play, Edit2, Trash2, Globe, FileText, 
   Volume2, Sliders, Hash, Shield, RefreshCw, AlertCircle,
@@ -313,7 +314,7 @@ export default function LibraryTab({
     const failures: string[] = [];
     try {
       for (const target of targets) {
-        setBulkActionStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${target.resource.sentence_code}`);
+        setBulkActionStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${getShortSentenceCode(target.resource.sentence_code, target.resource.order_index)}`);
         try {
           if (useSandbox) {
             sandboxDb.queueAudioJob(target.resource.id, target.lang, 'Admin Operator');
@@ -322,7 +323,7 @@ export default function LibraryTab({
           }
           ok += 1;
         } catch (err: any) {
-          failures.push(`${target.resource.sentence_code} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
+          failures.push(`${getShortSentenceCode(target.resource.sentence_code, target.resource.order_index)} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
         }
       }
       setBulkActionStatus(`TTS complete: ${ok}/${targets.length} generated${failures.length ? `, ${failures.length} failed` : ''}.`);

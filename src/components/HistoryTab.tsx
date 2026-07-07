@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Course, Lesson, SentenceResource, PracticeRoom, RoomRound, Learner, LearnerResponse, LearnerProgress } from '../types';
+import { getShortSentenceCode } from '../lib/resourceCode';
 import { 
   History, Calendar, Award, Star, BarChart2, PieChart, Users, CheckCircle, 
   HelpCircle, ChevronDown, ChevronUp, Plus, Trash2, Sliders, Filter,
@@ -357,7 +358,7 @@ export default function HistoryTab({
       } else if (xAxisField === 'response_color') {
         key = item.response_color.toUpperCase();
       } else if (xAxisField === 'sentence_code') {
-        key = item.sentence?.sentence_code || 'N/A';
+        key = getShortSentenceCode(item.sentence?.sentence_code, item.sentence?.order_index);
       }
 
       // Resolve Y metric value
@@ -2548,7 +2549,9 @@ export default function HistoryTab({
                     {visibleColumns.drillCode && (
                       <td className="py-3 font-mono text-[10px]">
                         <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200/50">
-                          {audit.sentence?.sentence_code || 'N/A'}
+                          <span title={audit.sentence?.sentence_code || 'N/A'}>
+                            {getShortSentenceCode(audit.sentence?.sentence_code, audit.sentence?.order_index)}
+                          </span>
                         </span>
                       </td>
                     )}

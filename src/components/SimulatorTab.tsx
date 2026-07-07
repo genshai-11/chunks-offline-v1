@@ -8,6 +8,7 @@ import { Course, Lesson, LessonSection, SentenceResource, CCIStandardCard, CVRUn
 import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
 import { generateResourceAudio } from '../lib/ttsService';
+import { getShortSentenceCode } from '../lib/resourceCode';
 import { 
   Plus, Play, Check, AlertTriangle, Users, BookOpen, Clock, Activity, 
   Award, RefreshCw, LogIn, UserCheck, Send, Volume2, Sparkles, AlertCircle, Trash2, Shield,
@@ -212,12 +213,14 @@ export default function SimulatorTab({
   const selectedLessonId = setupLessonId || filteredLessons[0]?.id || '';
   const filteredSections = sections.filter(s => s.lesson_id === selectedLessonId);
 
-  const getMissingAudioResources = (items: SentenceResource[]) => {
-    return items.filter(r => !r.audio_en_url || !r.audio_vi_url);
+  const hasAnyAudio = (resource: SentenceResource) => Boolean(resource.audio_en_url || resource.audio_vi_url);
+
+  const getResourcesWithoutAnyAudio = (items: SentenceResource[]) => {
+    return items.filter(r => !hasAnyAudio(r));
   };
 
-  const formatMissingAudioSummary = (items: SentenceResource[]) => {
-    return items.slice(0, 8).map(r => `${r.sentence_code}: ${!r.audio_en_url ? 'missing EN' : ''}${!r.audio_en_url && !r.audio_vi_url ? ', ' : ''}${!r.audio_vi_url ? 'missing VI' : ''}`).join('\n');
+  const formatMissingRequiredAudioSummary = (items: SentenceResource[]) => {
+    return items.slice(0, 8).map(r => `${getShortSentenceCode(r.sentence_code, r.order_index)}: no EN/VI audio`).join('\n');
   };
 
   const getApprovedResourcesInScope = () => {
@@ -527,15 +530,14 @@ export default function SimulatorTab({
 
   const prepareMissingAudioAndContinue = async () => {
     if (!audioPrepMode || audioPrepResources.length === 0) return;
-    const missingAudio = getMissingAudioResources(audioPrepResources);
-    const targets: Array<{ resource: SentenceResource; lang: 'en' | 'vi' }> = [];
-    missingAudio.forEach(resource => {
-      if (!resource.audio_en_url) targets.push({ resource, lang: 'en' });
-      if (!resource.audio_vi_url) targets.push({ resource, lang: 'vi' });
-    });
+    const resourcesWithoutAnyAudio = getResourcesWithoutAnyAudio(audioPrepResources);
+    const targets: Array<{ resource: SentenceResource; lang: 'en' | 'vi' }> = resourcesWithoutAnyAudio.map(resource => ({
+      resource,
+      lang: audioLang
+    }));
 
     if (targets.length === 0) {
-      setAudioPrepStatus('Audio is already complete. Continuing...');
+      setAudioPrepStatus('Every resource has at least one audio track. Continuing...');
     }
 
     setAudioPrepBusy(true);
@@ -543,12 +545,12 @@ export default function SimulatorTab({
     const failures: string[] = [];
     try {
       for (const target of targets) {
-        setAudioPrepStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${target.resource.sentence_code}`);
+        setAudioPrepStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${getShortSentenceCode(target.resource.sentence_code, target.resource.order_index)}`);
         try {
           await generateResourceAudio(target.resource, target.lang);
           ok += 1;
         } catch (err: any) {
-          failures.push(`${target.resource.sentence_code} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
+          failures.push(`${getShortSentenceCode(target.resource.sentence_code, target.resource.order_index)} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
         }
       }
 
@@ -608,11 +610,11 @@ export default function SimulatorTab({
             throw new Error("No approved sentence resources found in the selected scope. Please approve sentences in the Library first.");
           }
 
-          const missingAudio = getMissingAudioResources(approvedResources);
-          if (missingAudio.length > 0) {
+          const resourcesWithoutAnyAudio = getResourcesWithoutAnyAudio(approvedResources);
+          if (resourcesWithoutAnyAudio.length > 0) {
             setAudioPrepMode('create');
             setAudioPrepResources(approvedResources);
-            setAudioPrepStatus(`${missingAudio.length} approved resources are missing EN/VI audio. Prepare TTS to launch this classroom.`);
+            setAudioPrepStatus(`${resourcesWithoutAnyAudio.length} approved resources have no EN/VI audio at all. Prepare ${audioLang.toUpperCase()} TTS to launch this classroom.\n${formatMissingRequiredAudioSummary(resourcesWithoutAnyAudio)}`);
             return;
           }
 
@@ -728,11 +730,11 @@ export default function SimulatorTab({
     if (!activeRoom || activeRound?.status === 'open') return;
     if (roomRounds.length === 0) {
       const snapshotResources = availableSentenceIds.map(id => resources.find(r => r.id === id)).filter(Boolean) as SentenceResource[];
-      const missingAudio = getMissingAudioResources(snapshotResources);
-      if (missingAudio.length > 0) {
+      const resourcesWithoutAnyAudio = getResourcesWithoutAnyAudio(snapshotResources);
+      if (resourcesWithoutAnyAudio.length > 0) {
         setAudioPrepMode('start');
         setAudioPrepResources(snapshotResources);
-        setAudioPrepStatus(`${missingAudio.length} session resources are missing EN/VI audio. Prepare TTS to start this classroom.`);
+        setAudioPrepStatus(`${resourcesWithoutAnyAudio.length} session resources have no EN/VI audio at all. Prepare ${audioLang.toUpperCase()} TTS to start this classroom.\n${formatMissingRequiredAudioSummary(resourcesWithoutAnyAudio)}`);
         return;
       }
     }
@@ -1280,11 +1282,11 @@ export default function SimulatorTab({
                   <h3 className="text-sm font-bold text-amber-900">Audio preparation required before class can start</h3>
                 </div>
                 <p className="text-xs text-amber-800 leading-relaxed">
-                  {audioPrepStatus || 'Some resources in this live classroom need EN/VI TTS audio. Prepare missing tracks, then the classroom flow will continue automatically.'}
+                  {audioPrepStatus || `Some resources in this live classroom have no audio at all. Prepare one ${audioLang.toUpperCase()} track per resource, then the classroom flow will continue automatically.`}
                 </p>
                 <div className="text-[11px] text-amber-800 bg-white/70 border border-amber-100 rounded-lg p-2 max-h-32 overflow-auto font-mono whitespace-pre-line">
-                  {formatMissingAudioSummary(getMissingAudioResources(audioPrepResources)) || 'No missing audio detected.'}
-                  {getMissingAudioResources(audioPrepResources).length > 8 ? `\n...and ${getMissingAudioResources(audioPrepResources).length - 8} more resources` : ''}
+                  {formatMissingRequiredAudioSummary(getResourcesWithoutAnyAudio(audioPrepResources)) || 'Every resource has at least one audio track.'}
+                  {getResourcesWithoutAnyAudio(audioPrepResources).length > 8 ? `\n...and ${getResourcesWithoutAnyAudio(audioPrepResources).length - 8} more resources` : ''}
                 </div>
               </div>
               <div className="flex flex-col sm:flex-row lg:flex-col gap-2 lg:min-w-[210px]">
@@ -1832,7 +1834,9 @@ export default function SimulatorTab({
                               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Next sentence preview</span>
-                                  <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">{nextRes.sentence_code}</span>
+                                  <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded" title={nextRes.sentence_code}>
+                                    {getShortSentenceCode(nextRes.sentence_code, nextRes.order_index)}
+                                  </span>
                                   <span className="text-[10px] text-indigo-700 font-bold">{nextCard?.label || 'Selected CCI'} • X={nextCard?.standard_value || 1}</span>
                                   <span className="text-[10px] text-red-700 font-bold">Ω={nextRes.cvr_value || nextRes.default_cvr_value || 1}</span>
                                 </div>

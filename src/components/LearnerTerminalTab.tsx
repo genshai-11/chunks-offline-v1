@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { SentenceResource, CCIStandardCard, CCIPerformanceParameter, Learner } from '../types';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
+import { getShortSentenceCode } from '../lib/resourceCode';
 import { Users, Clock, LogIn, LogOut, Lock, CheckCircle2, BarChart3, Award } from 'lucide-react';
 
 type LearnerUiSettings = {
@@ -13,13 +14,15 @@ type LearnerUiSettings = {
   summaryTitle: string;
   showColorCounts: boolean;
   showHighestCpd: boolean;
+  showRealtimeCalculationLogic: boolean;
 };
 
 const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   showSummaryCard: true,
   summaryTitle: 'My Session Summary',
   showColorCounts: true,
-  showHighestCpd: true
+  showHighestCpd: true,
+  showRealtimeCalculationLogic: true
 };
 
 function readLearnerUiSettings(): LearnerUiSettings {
@@ -558,8 +561,8 @@ export default function LearnerTerminalTab({
                   <span className="text-[10px] font-mono font-black text-slate-400 uppercase tracking-wider">Active Round</span>
                   <h4 className="text-lg font-black text-slate-900">Round #{activeRound.round_index}</h4>
                   {activeResource && (
-                    <div className="inline-flex items-center rounded-full bg-white border border-slate-200 px-3 py-1 text-[10px] font-mono font-bold text-slate-500">
-                      {activeResource.sentence_code}
+                    <div className="inline-flex items-center rounded-full bg-white border border-slate-200 px-3 py-1 text-[10px] font-mono font-bold text-slate-500" title={activeResource.sentence_code}>
+                      {getShortSentenceCode(activeResource.sentence_code, activeResource.order_index)}
                     </div>
                   )}
                 </div>

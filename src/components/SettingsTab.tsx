@@ -18,13 +18,15 @@ type LearnerUiSettings = {
   summaryTitle: string;
   showColorCounts: boolean;
   showHighestCpd: boolean;
+  showRealtimeCalculationLogic: boolean;
 };
 
 const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   showSummaryCard: true,
   summaryTitle: 'My Session Summary',
   showColorCounts: true,
-  showHighestCpd: true
+  showHighestCpd: true,
+  showRealtimeCalculationLogic: true
 };
 
 function readLearnerUiSettings(): LearnerUiSettings {
@@ -1477,7 +1479,7 @@ export default function SettingsTab({
                   className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:outline-none font-semibold"
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
                   <input type="checkbox" checked={learnerUiSettings.showSummaryCard} onChange={(e) => updateLearnerUiSettings({ showSummaryCard: e.target.checked })} />
                   <span className="font-bold text-slate-700">Show summary</span>
@@ -1489,6 +1491,10 @@ export default function SettingsTab({
                 <label className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
                   <input type="checkbox" checked={learnerUiSettings.showHighestCpd} onChange={(e) => updateLearnerUiSettings({ showHighestCpd: e.target.checked })} />
                   <span className="font-bold text-slate-700">Highest CPD</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 rounded-lg bg-indigo-50 border border-indigo-100 cursor-pointer">
+                  <input type="checkbox" checked={learnerUiSettings.showRealtimeCalculationLogic} onChange={(e) => updateLearnerUiSettings({ showRealtimeCalculationLogic: e.target.checked })} />
+                  <span className="font-bold text-indigo-700">Show 实时公式 / Real-Time Logic</span>
                 </label>
               </div>
               <p className="text-[10px] text-slate-500 leading-relaxed">
@@ -1618,31 +1624,33 @@ export default function SettingsTab({
                 </div>
 
                 {/* Simulated Formulas preview on button press */}
-                <div className="mt-4 bg-slate-900 text-slate-200 p-3 rounded-xl border border-slate-800 text-[10px] space-y-1.5 font-mono">
-                  <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider border-b border-slate-800 pb-1">
-                    实时公式 / Real-Time Calculation Logic
+                {learnerUiSettings.showRealtimeCalculationLogic && (
+                  <div className="mt-4 bg-slate-900 text-slate-200 p-3 rounded-xl border border-slate-800 text-[10px] space-y-1.5 font-mono">
+                    <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider border-b border-slate-800 pb-1">
+                      实时公式 / Real-Time Calculation Logic
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Y Performance Option:</span>
+                      <strong className="text-white font-bold">{mockSelectedParam ? `${mockSelectedParam.label} (Y=${mockSelectedParam.performance_y})` : 'None'}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">CCI Standard X:</span>
+                      <strong className="text-white font-bold">X = {mockCciX}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">CVR Multiplier:</span>
+                      <strong className="text-white font-bold">Ω = {mockCvrValue}</strong>
+                    </div>
+                    <div className="flex justify-between text-amber-300 font-bold border-t border-slate-800/80 pt-1 mt-1">
+                      <span>CCI Accuracy:</span>
+                      <span>Y * X = {calcMockCciResult()} A</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-400 font-bold">
+                      <span>Final CPD Score:</span>
+                      <span>CCI * CVR = {calcMockCpdResult()}</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Y Performance Option:</span>
-                    <strong className="text-white font-bold">{mockSelectedParam ? `${mockSelectedParam.label} (Y=${mockSelectedParam.performance_y})` : 'None'}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">CCI Standard X:</span>
-                    <strong className="text-white font-bold">X = {mockCciX}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">CVR Multiplier:</span>
-                    <strong className="text-white font-bold">Ω = {mockCvrValue}</strong>
-                  </div>
-                  <div className="flex justify-between text-amber-300 font-bold border-t border-slate-800/80 pt-1 mt-1">
-                    <span>CCI Accuracy:</span>
-                    <span>Y * X = {calcMockCciResult()} A</span>
-                  </div>
-                  <div className="flex justify-between text-emerald-400 font-bold">
-                    <span>Final CPD Score:</span>
-                    <span>CCI * CVR = {calcMockCpdResult()}</span>
-                  </div>
-                </div>
+                )}
 
               </div>
             </div>

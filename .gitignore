@@ -6,5 +6,6 @@ coverage/
 .DS_Store
 *.log
 *.pid
+.tmp-firebase-*.json
 .env*
 !.env.example

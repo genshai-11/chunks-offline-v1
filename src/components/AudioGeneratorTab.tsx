@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { SentenceResource, AudioGenerationJob } from '../types';
 import { SchemaHealthResult } from '../lib/schemaHealth';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
+import { getShortSentenceCode } from '../lib/resourceCode';
 import { 
   Volume2, RefreshCw, CheckCircle2, AlertCircle, Cpu, Play, Search, ShieldAlert, Sparkles, Plus, Check
 } from 'lucide-react';
@@ -59,7 +60,7 @@ export default function AudioGeneratorTab({
 
   const getResourceCode = (resId: string) => {
     const res = resources.find(r => r.id === resId);
-    return res ? res.sentence_code : '??-???';
+    return res ? getShortSentenceCode(res.sentence_code, res.order_index) : 'S000';
   };
 
   const getResourceText = (resId: string, lang: 'en' | 'vi') => {
