@@ -26,6 +26,18 @@ Browser-side workaround:
 
 If Settings toggle **Allow learners to create a new profile from Join Room** is off, learners must select an existing roster profile.
 
+## Live room still shows “Waiting for first response” after CCI Performance increments
+
+Expected behavior after the next-turn flow fix:
+
+- Once the first learner response is captured, CCI Performance can show values such as `Green: 1`.
+- The teacher console should not continue presenting that state as waiting for a first response.
+- Between turns, the main canvas should switch to the next sentence preview with a speaker/play control and an **Open Next Turn Speaker Prompt** fallback button.
+- Focus mode gives the prompt canvas more width than the roster panel.
+- The roster panel shows total received user responses and unique responders.
+
+If the console still appears stuck, refresh the teacher console and verify the latest GitHub/Firebase release includes the live room next-turn flow fix.
+
 ## Firebase deploy issue
 
 1. Check GitHub Actions.
