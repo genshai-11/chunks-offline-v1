@@ -655,6 +655,76 @@ After rollback, verify https://chunks-offline.web.app and record the rollback in
 
 ---
 
+## 2026-07-07 14:43 GMT+7 — Live auto-advance no-skip Hosting release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `17bf2a1`  
+**Tag**: `firebase-hosting-20260707-1443-live-auto-noskip`  
+**Preview URL**: https://chunks-offline--pr-6-supreovo.web.app  
+**Production URL/version**: https://chunks-offline.web.app served `assets/index-37Qcpce3.js`  
+**Preview workflow**: https://github.com/genshai-11/chunks-offline-v1/actions/runs/28850283335  
+**Production workflow**: https://github.com/genshai-11/chunks-offline-v1/actions/runs/28850364996
+
+### Scope
+
+- Fixed live auto-advance skipping every other turn by filtering captured responses to the current open round before starting the auto-countdown.
+- Cleared stale previous-round responses when opening a new round so realtime lag cannot auto-close the next sentence.
+- Removed the cancellable extra handoff timer after the 1-second countdown so the close/open-next operation runs immediately after countdown completion.
+- Added active red-canvas controls while a round is open:
+  - Audio language EN/VI
+  - Next CCI selector
+  - Auto-play on launch
+  - Replay Prompt
+  - Speech Settings for volume/rate/pitch
+- Updated Spec Kit quickstart/tasks to validate consecutive 001 → 002 → 003 progression and active-canvas settings.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run lint` attempted; blocked by known RTK/ESLint JSON wrapper issue: `ESLint output (JSON parse failed: EOF while parsing a value at line 1 column 0)`.
+- [x] GitHub preview workflow passed, including CI `npm run lint` and `npm run build`.
+- [x] Preview verified:
+  - `/` → 200, `assets/index-37Qcpce3.js`
+  - `/live-session` → 200, `assets/index-37Qcpce3.js`
+  - `/teacher` → 200, `assets/index-37Qcpce3.js`
+  - `/learner` → 200, `assets/index-37Qcpce3.js`
+  - `/settings` → 200, `assets/index-37Qcpce3.js`
+  - `/reports` → 200, `assets/index-37Qcpce3.js`
+- [x] Production workflow passed, including CI `npm run lint` and `npm run build`.
+- [x] Production verified:
+  - `/` → 200, `assets/index-37Qcpce3.js`
+  - `/live-session` → 200, `assets/index-37Qcpce3.js`
+  - `/teacher` → 200, `assets/index-37Qcpce3.js`
+  - `/learner` → 200, `assets/index-37Qcpce3.js`
+  - `/settings` → 200, `assets/index-37Qcpce3.js`
+  - `/reports` → 200, `assets/index-37Qcpce3.js`
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1425-live-session-safe-close
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, verify https://chunks-offline.web.app and record the rollback in this log.
+
+### Notes / risks
+
+- Hosting-only release. No Supabase schema migration, data mutation, Storage change, or Firebase Function deploy included.
+- GitHub Actions emitted a Node.js 20 deprecation warning for `actions/checkout@v4` and `actions/setup-node@v4` being forced to Node.js 24 by the runner; deployment still passed.
+- Browser-level manual validation should confirm the teacher flow advances 001 → 002 → 003 with real learner submissions.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
