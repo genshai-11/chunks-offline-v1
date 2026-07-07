@@ -169,6 +169,41 @@ delete from public.courses where id = '21d20930-fcac-54a2-a148-bfd31940cb5a';
 
 ---
 
+## 2026-07-07 10:52 GMT+7 — Planned Supabase course rename
+
+**Operator**: Lucy with Craft Agent  
+**Supabase project**: `ftfxekdxeoxizoyxuqoz`
+
+### Scope
+
+Rename course titles only; no table schema change, no Hosting deploy, no Firebase Function deploy.
+
+Requested mapping:
+
+- `Chunks-Material-Level-A` → `ERES-level-A`
+- `Chunks-Material-Level-B` → `ERES-level-B`
+- `EREL` → `EREL-level-B`
+
+### Planned validation
+
+- [ ] List courses before rename
+- [ ] Apply idempotent title updates by course id/current title
+- [ ] Verify course names and resource counts after rename
+
+### Rollback SQL
+
+```sql
+update public.courses set title = 'Chunks-Material-Level-A', updated_at = now() where id = '20f87d29-56ce-52b9-8a15-708f2c14e5f5';
+update public.courses set title = 'Chunks-Material-Level-B', updated_at = now() where id = '0b57d4a9-2063-57d8-874c-233de4a2eae0';
+update public.courses set title = 'EREL', updated_at = now() where id = '21d20930-fcac-54a2-a148-bfd31940cb5a';
+```
+
+### Result
+
+- [ ] Pending
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
