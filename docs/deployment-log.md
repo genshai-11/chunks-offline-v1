@@ -86,7 +86,9 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 **Operator**: Lucy with Craft Agent  
 **Release tag**: `firebase-hosting-20260707-0957-latest`  
-**Production URL**: <https://chunks-offline.web.app>
+**Production URL**: <https://chunks-offline.web.app>  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28838753125>  
+**Commit**: `9ee0502`
 
 ### Scope
 
@@ -98,8 +100,8 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 - [x] `npx tsc --noEmit`
 - [x] `npm run build`
-- [ ] Firebase preview verified
-- [ ] Production verified
+- [x] Firebase preview verified: https://chunks-offline--latest-20260707-0957-g0abvl0n.web.app
+- [x] Production verified: https://chunks-offline.web.app served `assets/index-CRY8kEuy.js`
 
 ### Rollback
 
