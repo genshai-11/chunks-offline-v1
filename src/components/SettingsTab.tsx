@@ -1078,7 +1078,11 @@ export default function SettingsTab({
             </div>
             <button
               type="submit"
-              className="md:col-span-3 px-3 py-3 rounded-xl bg-slate-900 text-white text-xs font-bold"
+              onClick={(e) => {
+                e.preventDefault();
+                handleAddLearner();
+              }}
+              className="md:col-span-3 px-3 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors"
             >
               Add Learner
             </button>
