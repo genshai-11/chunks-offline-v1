@@ -134,7 +134,7 @@
 - [x] T042 Run `npx tsc --noEmit` and fix any TypeScript errors
 - [x] T043 Run `npm run build` and fix any build errors
 - [x] T044 Validate all quickstart scenarios in `specs/002-dynamic-data-explorer/quickstart.md`
-- [ ] T045 If deploying, follow release controls in `docs/devops-runbook.md` and update `docs/deployment-log.md`
+- [x] T045 If deploying, follow release controls in `docs/devops-runbook.md` and update `docs/deployment-log.md`
 
 ---
 

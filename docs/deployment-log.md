@@ -208,6 +208,66 @@ update public.courses set title = 'EREL', updated_at = now() where id = '21d2093
 
 ---
 
+## 2026-07-07 12:01 GMT+7 — Dynamic Data Explorer and Progress Chart Studio release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `f3625fe`  
+**Tag**: `firebase-hosting-20260707-1201-data-explorer`  
+**Preview URL**: <https://chunks-offline--pr-1-knz0dt1n.web.app>  
+**Production URL/version**: <https://chunks-offline.web.app> served `assets/index-UMagjzvc.js`  
+**CI workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28842934634>  
+**Preview workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28842942581>  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28843012417>
+
+### Scope
+
+- Add Spec Kit feature artifacts for Dynamic Data Explorer & Chart Builder.
+- Add Reports → Data Explorer with live response grid, filters, sorting, column visibility, row selection, chart builder, selected/filtered chart scope, and pivot-style summaries.
+- Add Reports → Progress Chart Studio with supported chart templates, required input parameters, data-processing rules, and live preview from current report filters.
+- Add TanStack table/virtual dependencies.
+- Include related learner UI/teacher launch flow fixes already validated in the release tree.
+
+### Validation
+
+- [x] `npx tsc --noEmit` passed locally.
+- [x] `npm run build` passed locally.
+- [x] `npm run lint` hit a local wrapper parse issue; direct TypeScript validation passed and GitHub CI `npm run lint` passed.
+- [x] GitHub CI passed for commit `f3625fe`.
+- [x] Data Explorer quickstart scenarios validated locally against live report data.
+- [x] Progress Chart Studio validated locally with template switching and live preview.
+- [x] Firebase preview verified: `/`, `/reports`, and `/learner` returned HTTP 200 and app shell.
+- [x] Production verified: `/`, `/reports`, and `/learner` returned HTTP 200 and served `assets/index-UMagjzvc.js`.
+
+### Rollback
+
+Preferred Hosting rollback: Firebase Console → project `chunks-offline` → Hosting → site `chunks-offline` → Release history → rollback to previous known-good release.
+
+Git tag redeploy rollback:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1031-learner-erel
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, return to main:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+### Notes / risks
+
+- Hosting-only release; no Supabase migration or Firebase Function deploy included.
+- GitHub Actions emitted a Node.js 20 deprecation annotation for upstream actions, but workflows completed successfully.
+- Bundle size warning remains non-blocking and should be handled later with route/code splitting.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
