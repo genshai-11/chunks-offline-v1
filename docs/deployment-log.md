@@ -1042,6 +1042,49 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 ---
 
+## 2026-07-07 16:33 GMT+7 — Audio speed control & Next turn preview component
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `b248caf`  
+**Tag**: `firebase-hosting-20260707-1633-speed-preview`  
+**Preview URL**: https://chunks-offline--preview-local-mpqkh436.web.app  
+**Production URL/version**: https://chunks-offline.web.app  
+
+### Scope
+
+- Applied the `audioRate` (speed/playback rate setting) to the `HTMLAudioElement` playing the storage file inside `playSentenceAudio` in [src/components/SimulatorTab.tsx](file:///C:/Users/gensh/OneDrive/M%C3%A1y%20t%C3%ADnh/LUCY/PROJECT-WORKPLACE/chunks-offline-v1/src/components/SimulatorTab.tsx). Previously, the speed control was only applied to the browser's speech synthesis engine.
+- Implemented a new Next Turn Preview card component inside the active open round view in [src/components/SimulatorTab.tsx](file:///C:/Users/gensh/OneDrive/M%C3%A1y%20t%C3%ADnh/LUCY/PROJECT-WORKPLACE/chunks-offline-v1/src/components/SimulatorTab.tsx), styled with the exact CSS classes `"bg-white border border-red-100 rounded-2xl p-6 md:p-8 text-center space-y-5"`. It displays a read-only preview (Vietnamese & English) of the next sentence scheduled to play in the queue.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run deploy:preview` channel deployed and verified: https://chunks-offline--preview-local-mpqkh436.web.app
+  - Verified audio file plays faster/slower based on speed slider.
+  - Verified Next Turn Preview card shows up correct next sentence and states "NO MORE SENTENCES" at final turn.
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1630-autoplay-fix
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+### Notes / risks
+
+- Purely UI adjustment. No database side-effects.
+
+---
+
+
 
 
 

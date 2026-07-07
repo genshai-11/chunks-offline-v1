@@ -191,6 +191,7 @@ export default function SimulatorTab({
       setIsAudioPlaying(true);
       const audio = new Audio(playableUrl);
       audio.volume = audioVolume;
+      audio.playbackRate = audioRate;
       audio.play()
         .then(() => {
           audio.onended = () => setIsAudioPlaying(false);
@@ -2079,6 +2080,47 @@ export default function SimulatorTab({
                                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                                   <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">English</span>
                                   <p className="text-sm font-semibold text-slate-900 mt-1 leading-relaxed">{res.text_en || res.text_prompt || '—'}</p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Next Turn Preview Card */}
+                      <div className="mt-4">
+                        {(() => {
+                          const usedIds = new Set<string>(roomRounds.map(rd => String(rd.sentence_resource_id)));
+                          const nextId = getNextPlayableSentenceId(usedIds);
+                          const nextRes = nextId ? resources.find(r => r.id === nextId) : null;
+                          if (!nextRes) {
+                            return (
+                              <div className="bg-white border border-red-100 rounded-2xl p-6 md:p-8 text-center space-y-3">
+                                <span className="text-[10px] font-mono font-black text-slate-400 uppercase bg-slate-100 px-3 py-1 rounded-full tracking-[0.2em]">
+                                  NO MORE SENTENCES IN QUEUE
+                                </span>
+                                <p className="text-xs text-slate-400 italic">This is the final sentence of the selected lesson/scope.</p>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="bg-white border border-red-100 rounded-2xl p-6 md:p-8 text-center space-y-5">
+                              <div className="space-y-1">
+                                <span className="text-[10px] font-mono font-black text-red-700 uppercase bg-red-100 px-3 py-1 rounded-full tracking-[0.2em]">
+                                  NEXT TURN PREVIEW • {nextRes.sentence_code}
+                                </span>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                  Preview of the next sentence in queue
+                                </p>
+                              </div>
+                              <div className="max-w-2xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-3 text-left">
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Vietnamese</span>
+                                  <p className="text-sm font-semibold text-slate-900 mt-1 leading-relaxed">{nextRes.text_vi || '—'}</p>
+                                </div>
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">English</span>
+                                  <p className="text-sm font-semibold text-slate-900 mt-1 leading-relaxed">{nextRes.text_en || nextRes.text_prompt || '—'}</p>
                                 </div>
                               </div>
                             </div>
