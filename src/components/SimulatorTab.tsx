@@ -815,6 +815,11 @@ export default function SimulatorTab({
   const turnLabel = activeRound ? String(activeRound.round_index).padStart(3, '0') : String(Math.min(roomRounds.length + 1, Math.max(totalRounds, 1))).padStart(3, '0');
   const capturedTurnCount = roomResponseHistory.length;
   const activeLearnerCount = activeRoster.filter(m => m.presence_status === 'online').length;
+  const uniqueRespondingLearnerCount = new Set(roomResponseHistory.map(resp => resp.learner_id)).size;
+  const latestCapturedResponse = [...roomResponseHistory]
+    .sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime())[0] || null;
+  const hasCapturedResponseInSession = capturedTurnCount > 0;
+  const isBetweenTurnsAfterCapture = hasCapturedResponseInSession && activeRound?.status !== 'open' && !sessionComplete;
   const performanceSummary = sandboxDb.cciPerformanceParameters
     .map(param => ({
       ...param,
@@ -1623,7 +1628,7 @@ export default function SimulatorTab({
         ) : (
           
           /* 2. LIVE CLASSROOM RUNNING CONSOLE */
-          <div className={`${isFocusMode ? 'fixed inset-4 z-50 bg-white rounded-2xl shadow-2xl overflow-auto border border-slate-200' : ''} p-5 flex-1 flex flex-col justify-between space-y-6`}>
+          <div className={`${isFocusMode ? 'fixed inset-3 lg:inset-4 z-50 bg-white rounded-2xl shadow-2xl overflow-auto border border-slate-200' : ''} p-4 lg:p-5 flex-1 flex flex-col justify-between space-y-4 lg:space-y-5 min-h-0`}>
             
             {/* Header Status */}
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
@@ -1743,10 +1748,10 @@ export default function SimulatorTab({
             </div>
 
             {/* Main Workspace Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 flex-1">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 flex-1 min-h-0">
               
               {/* Roster & Students */}
-              <div className="md:col-span-4 bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col justify-between">
+              <div className={`${isFocusMode ? 'md:col-span-3' : 'md:col-span-4'} bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col justify-between`}>
                 <div>
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
@@ -1754,6 +1759,19 @@ export default function SimulatorTab({
                       Roster ({activeRoster.length})
                     </span>
 
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div className="bg-white border border-slate-200 rounded-lg p-2">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">User Responses</span>
+                      <p className="text-lg font-black text-slate-900 leading-tight">{capturedTurnCount}</p>
+                      <span className="text-[9px] text-slate-400">total received</span>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-lg p-2">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Responders</span>
+                      <p className="text-lg font-black text-slate-900 leading-tight">{uniqueRespondingLearnerCount}</p>
+                      <span className="text-[9px] text-slate-400">unique learners</span>
+                    </div>
                   </div>
 
                   <div className="space-y-1.5 max-h-[180px] overflow-auto">
@@ -1786,11 +1804,11 @@ export default function SimulatorTab({
               </div>
 
               {/* Round Actions & Selected Prompt */}
-              <div className="md:col-span-8 flex flex-col justify-between space-y-4">
+              <div className={`${isFocusMode ? 'md:col-span-9' : 'md:col-span-8'} flex flex-col justify-between space-y-4 min-h-0`}>
                 
                 {activeRound && activeRound.status === 'open' ? (
                   /* ACTIVE OPEN ROUND VIEW */
-                  <div className="bg-red-50/50 border border-red-200 rounded-xl p-4 space-y-4 flex-1 flex flex-col justify-between">
+                  <div className={`${isFocusMode ? 'p-5 md:p-6' : 'p-4'} bg-red-50/50 border border-red-200 rounded-xl space-y-4 flex-1 flex flex-col justify-between min-h-[520px]`}>
                     <div>
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-mono font-bold text-red-700 uppercase bg-red-100 px-2 py-0.5 rounded">
@@ -1909,7 +1927,7 @@ export default function SimulatorTab({
                   </div>
                 ) : (
                   /* SESSION CONTROL / NEXT ROUND PREVIEW */
-                  <div className="border border-slate-200 rounded-xl p-4 space-y-4 flex-1 flex flex-col justify-between bg-slate-50/50">
+                  <div className={`${isFocusMode ? 'p-5 md:p-6 min-h-[620px]' : 'p-4'} border border-slate-200 rounded-xl space-y-4 flex-1 flex flex-col justify-between bg-slate-50/50`}>
                     {(() => {
                       const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
                       const nextSentenceId = getNextPlayableSentenceId(usedIds);
@@ -1944,18 +1962,42 @@ export default function SimulatorTab({
                             </div>
 
                             {nextRes ? (
-                              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Next sentence preview</span>
-                                  <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded" title={nextRes.sentence_code}>
-                                    {getShortSentenceCode(nextRes.sentence_code, nextRes.order_index)}
-                                  </span>
-                                  <span className="text-[10px] text-indigo-700 font-bold">{nextCard?.label || 'Selected CCI'} • X={nextCard?.standard_value || 1}</span>
-                                  <span className="text-[10px] text-red-700 font-bold">Ω={nextRes.cvr_value || nextRes.default_cvr_value || 1}</span>
+                              <div className={`bg-white border border-slate-200 rounded-xl ${isFocusMode ? 'p-5 md:p-6' : 'p-4'} space-y-4`}>
+                                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                                  <div className="space-y-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                        {isBetweenTurnsAfterCapture ? 'Next turn ready after capture' : 'Next sentence preview'}
+                                      </span>
+                                      <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded" title={nextRes.sentence_code}>
+                                        {getShortSentenceCode(nextRes.sentence_code, nextRes.order_index)}
+                                      </span>
+                                      <span className="text-[10px] text-indigo-700 font-bold">{nextCard?.label || 'Selected CCI'} • X={nextCard?.standard_value || 1}</span>
+                                      <span className="text-[10px] text-red-700 font-bold">Ω={nextRes.cvr_value || nextRes.default_cvr_value || 1}</span>
+                                    </div>
+                                    {latestCapturedResponse && isBetweenTurnsAfterCapture && (
+                                      <p className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1 inline-flex">
+                                        Captured {latestCapturedResponse.learner.display_name}; moving to turn {String(roomRounds.length + 1).padStart(3, '0')}.
+                                      </p>
+                                    )}
+                                    <p className="text-xs text-slate-700 leading-relaxed">
+                                      Teacher audio/text stays visible only here. Learner terminals receive metadata and response buttons only.
+                                    </p>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => playSentenceAudio(nextRes)}
+                                    className={`shrink-0 mx-auto lg:mx-0 ${isFocusMode ? 'w-24 h-24 md:w-28 md:h-28' : 'w-20 h-20'} rounded-full flex items-center justify-center transition-all shadow-lg border ${
+                                      isAudioPlaying
+                                        ? 'bg-red-600 text-white border-red-500 animate-pulse shadow-red-200'
+                                        : 'bg-slate-950 hover:bg-slate-800 text-white border-slate-900 hover:scale-105'
+                                    }`}
+                                    title="Preview next turn audio"
+                                  >
+                                    <Volume2 className={`${isFocusMode ? 'w-12 h-12 md:w-14 md:h-14' : 'w-10 h-10'} ${isAudioPlaying ? 'animate-bounce' : ''}`} />
+                                  </button>
                                 </div>
-                                <p className="text-xs text-slate-700 leading-relaxed">
-                                  Teacher audio/text stays visible only here. Learner terminals receive metadata and response buttons only.
-                                </p>
                               </div>
                             ) : (
                               <div className="bg-white border border-slate-200 rounded-xl p-4 text-center text-xs text-slate-500">
@@ -2050,10 +2092,20 @@ export default function SimulatorTab({
                                 <Play className="w-3.5 h-3.5" />
                                 Start Session
                               </button>
-                            ) : (
-                              <div className="w-full py-3 bg-red-50 border border-red-100 text-red-700 rounded-lg text-xs font-bold text-center">
-                                {isComplete ? 'Session Complete' : 'Waiting for first response / auto-opening next turn'}
+                            ) : isComplete ? (
+                              <div className="w-full py-3 bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs font-bold text-center">
+                                Session Complete
                               </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleStartOrNextRound}
+                                disabled={!nextRes || activeRound?.status === 'open'}
+                                className="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-500 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm"
+                              >
+                                {isBetweenTurnsAfterCapture ? <Volume2 className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                                {isBetweenTurnsAfterCapture ? 'Open Next Turn Speaker Prompt' : 'Open Next Turn'}
+                              </button>
                             )}
                             <div className="text-[11px] text-slate-400 bg-slate-100 p-2 rounded flex items-center gap-2">
                               <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
