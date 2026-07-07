@@ -82,6 +82,7 @@ export default function LearnerTerminalTab({
   const [roundResponses, setRoundResponses] = useState<any[]>([]);
   const [sessionResponses, setSessionResponses] = useState<any[]>([]);
   const [memberCount, setMemberCount] = useState<number>(0);
+  const [membershipCanAnswer, setMembershipCanAnswer] = useState<boolean>(false);
   const [performanceParams, setPerformanceParams] = useState<CCIPerformanceParameter[]>(() => [...sandboxDb.cciPerformanceParameters]);
   const [submitNotice, setSubmitNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [joining, setJoining] = useState(false);
@@ -160,6 +161,7 @@ export default function LearnerTerminalTab({
       setRoundResponses([]);
       setSessionResponses([]);
       setMemberCount(0);
+      setMembershipCanAnswer(false);
       return;
     }
 
@@ -171,9 +173,12 @@ export default function LearnerTerminalTab({
         setRoundResponses([]);
         setSessionResponses([]);
         setMemberCount(0);
+        setMembershipCanAnswer(false);
         return;
       }
 
+      const myMembership = sandboxDb.memberships.find(m => m.room_id === room.id && m.learner_id === currentLearnerId);
+      setMembershipCanAnswer(Boolean(myMembership?.can_answer));
       const rounds = sandboxDb.rounds.filter(rd => rd.room_id === room.id);
       const roundIds = rounds.map(rd => rd.id);
       const openRound = rounds.find(rd => rd.status === 'open') || null;
@@ -198,10 +203,11 @@ export default function LearnerTerminalTab({
         setRoundResponses([]);
         setSessionResponses([]);
         setMemberCount(0);
+        setMembershipCanAnswer(false);
         return;
       }
 
-      const [{ data: roomRounds, error: roundsErr }, membershipResult] = await Promise.all([
+      const [{ data: roomRounds, error: roundsErr }, membershipResult, { data: myMembership, error: myMembershipErr }] = await Promise.all([
         supabase
           .from('room_rounds')
           .select('*')
@@ -210,11 +216,19 @@ export default function LearnerTerminalTab({
         supabase
           .from('room_memberships')
           .select('id', { count: 'exact', head: true })
+          .eq('room_id', room.id),
+        supabase
+          .from('room_memberships')
+          .select('can_answer,presence_status')
           .eq('room_id', room.id)
+          .eq('learner_id', currentLearnerId)
+          .maybeSingle()
       ]);
       if (roundsErr) throw roundsErr;
       if (membershipResult.error) throw membershipResult.error;
+      if (myMembershipErr) throw myMembershipErr;
       setMemberCount(membershipResult.count || 0);
+      setMembershipCanAnswer(Boolean(myMembership?.can_answer) && myMembership?.presence_status !== 'offline' && room.status !== 'finished');
 
       const rounds = roomRounds || [];
       const roundIds = rounds.map(rd => rd.id);
@@ -368,6 +382,7 @@ export default function LearnerTerminalTab({
     setRoundResponses([]);
     setSessionResponses([]);
     setMemberCount(0);
+    setMembershipCanAnswer(false);
   };
 
   const handleLogOut = () => {
@@ -383,6 +398,7 @@ export default function LearnerTerminalTab({
     setRoundResponses([]);
     setSessionResponses([]);
     setMemberCount(0);
+    setMembershipCanAnswer(false);
     onRefreshData();
   };
 
@@ -472,7 +488,8 @@ export default function LearnerTerminalTab({
   const isAnyResponseCaptured = roundResponses.length > 0;
   const captureMode = activeRound?.response_capture_mode_snapshot;
   const isAssigned = activeRound?.assigned_learner_id === currentLearnerId;
-  const canSubmit = !!activeRound && activeRound.status === 'open' && !hasAlreadyResponded && !isAnyResponseCaptured && (
+  const isRoomFinished = activeRoom?.status === 'finished';
+  const canSubmit = !!activeRound && activeRound.status === 'open' && membershipCanAnswer && !isRoomFinished && !hasAlreadyResponded && !isAnyResponseCaptured && (
     captureMode === 'first_responder' || isAssigned || (captureMode !== 'assigned' && captureMode !== 'auto_rotate')
   );
   const responseCounts = performanceParams.map(param => ({
@@ -702,7 +719,17 @@ export default function LearnerTerminalTab({
               </div>
             )}
 
-            {!activeRound || activeRound.status !== 'open' ? (
+            {isRoomFinished ? (
+              <div className="text-center py-14 space-y-4">
+                <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-300">
+                  <LogOut className="w-8 h-8" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-slate-800">Classroom session ended</h4>
+                  <p className="text-xs text-slate-400 mt-1">The teacher has closed this room. You can leave or join another room code.</p>
+                </div>
+              </div>
+            ) : !activeRound || activeRound.status !== 'open' ? (
               <div className="text-center py-14 space-y-4">
                 <div className="w-16 h-16 bg-slate-50 border border-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-300 animate-pulse">
                   <Clock className="w-8 h-8" />

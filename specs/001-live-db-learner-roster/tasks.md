@@ -131,16 +131,31 @@
 
 ---
 
-## Phase 7: Polish & Cross-Cutting Concerns
+## Phase 7: User Story 5 - Rejoin and safely close live sessions (Priority: P2)
+
+**Goal**: Teachers can manage active/recent rooms at `/live-session`, rejoin live classrooms, auto-advance inside the same teacher canvas, and turn learner pads off on teacher exit/end.
+
+**Independent Test**: Launch a room, join as a learner, capture one response, observe auto-next in the same teacher canvas, exit/rejoin through `/live-session`, and verify learner pads lock/off after teacher exit/end.
+
+- [x] T048 [US5] Add `/live-session` route and navigation entry in `src/App.tsx`
+- [x] T049 [US5] Add live session manager/rejoin/review UI in `src/components/SimulatorTab.tsx`
+- [x] T050 [US5] Fix auto-advance timer cleanup so close/open next-round transition executes in `src/components/SimulatorTab.tsx`
+- [x] T051 [US5] Lock learner memberships and clear room current round when teacher exits/finishes in `src/components/SimulatorTab.tsx`
+- [x] T052 [US5] Make Learner Terminal response buttons respect membership `can_answer` and room `finished` state in `src/components/LearnerTerminalTab.tsx`
+- [ ] T053 [US5] Validate teacher/learner two-browser flow and record evidence in `specs/001-live-db-learner-roster/quickstart.md`
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final validation, documentation, and release-control readiness
 
-- [x] T048 Run TypeScript validation with `npm run lint` and fix errors in `src/`
-- [ ] T049 Run full quickstart validation and update `specs/001-live-db-learner-roster/quickstart.md`
-- [ ] T050 [P] Update project README setup notes for live database/no-mock behavior in `README.md`
-- [ ] T051 [P] Review `.env.example` for Supabase variable naming and client-safe key guidance in `.env.example`
-- [ ] T052 Verify no product code imports `sandboxDb` by searching `src/` and record result in `specs/001-live-db-learner-roster/checklists/page-live-data.md`
-- [ ] T053 Review git diff and create a release-control commit plan in `specs/001-live-db-learner-roster/quickstart.md`
+- [x] T054 Run validation with `npx tsc --noEmit` and `npm run build`; note local `npm run lint` wrapper issue if it emits empty JSON
+- [ ] T055 Run full quickstart validation and update `specs/001-live-db-learner-roster/quickstart.md`
+- [ ] T056 [P] Update project README setup notes for live database/no-mock behavior in `README.md`
+- [ ] T057 [P] Review `.env.example` for Supabase variable naming and client-safe key guidance in `.env.example`
+- [ ] T058 Verify no product code imports `sandboxDb` by searching `src/` and record result in `specs/001-live-db-learner-roster/checklists/page-live-data.md`
+- [ ] T059 Review git diff and create a release-control commit plan in `specs/001-live-db-learner-roster/quickstart.md`
 
 ---
 
@@ -169,7 +184,7 @@
 - T013-T020 can be split by page after Foundational is complete.
 - T023-T030 can be split across Settings UI, helper, and migration documentation.
 - T042-T045 can run in parallel with US2 if schema helper interfaces are stable.
-- T050-T051 can run in parallel during Polish.
+- T056-T057 can run in parallel during Polish.
 
 ---
 
@@ -214,7 +229,7 @@ Before applying migrations or deploying:
 
 ## Notes
 
-- Current task count: 53.
+- Current task count: 59.
 - Suggested MVP scope: T001-T022.
 - DDL/migrations are planned but not applied in this task generation step.
 - Destructive learner deletion must be explicitly confirmed and should be blocked when dependent history exists.

@@ -71,6 +71,23 @@ As an operator, I can see and resolve database schema drift such as page code qu
 1. **Given** a page depends on a missing table, **When** Lucy opens that page, **Then** the UI shows a schema action requirement rather than failing silently.
 2. **Given** a schema gap has an approved migration, **When** it is applied and validated, **Then** generated data contracts and page queries agree with the database.
 
+---
+
+### User Story 5 - Rejoin and safely close live sessions (Priority: P2)
+
+As a teacher, I can open `/live-session`, rejoin an active classroom, let the same teacher canvas advance to the next sentence after a response, and safely close the console so learner pads turn off instead of staying answerable.
+
+**Why this priority**: Live classrooms must survive teacher refresh/rejoin and must not leave learner devices active after the teacher exits.
+
+**Independent Test**: Create a room, join from a learner device, capture a response, verify the next sentence opens in the same teacher console, exit/rejoin from `/live-session`, and finish the session; the learner screen never shows answer text/audio and ends/locks when the teacher closes.
+
+**Acceptance Scenarios**:
+
+1. **Given** a teacher has an active or recently finished room, **When** Lucy opens `/live-session`, **Then** she can rejoin active rooms and review recent finished sessions.
+2. **Given** first-response mode captures one learner response, **When** auto-advance runs, **Then** the current round closes and the next round opens in the same teacher canvas with learner pads unlocked for the new turn.
+3. **Given** the teacher exits the console or ends the classroom session, **When** learner devices receive realtime updates, **Then** response buttons are locked/off and finished rooms show a session-ended message.
+4. **Given** a learner is connected, **When** a round opens, **Then** the learner sees only safe metadata and response buttons, not English/Vietnamese answer text or audio controls.
+
 ### Edge Cases
 
 - The database has duplicate learner display names from prior anonymous joins.
@@ -81,6 +98,9 @@ As an operator, I can see and resolve database schema drift such as page code qu
 - The live database is missing `audio_generation_jobs` while the app still queries it.
 - RLS allows reads but blocks inserts/updates for a table mutation path.
 - Multiple learners attempt to submit for the same first-responder round at nearly the same time.
+- The teacher refreshes, closes the console, or returns later to an active room.
+- A learner remains on a room screen after the teacher finishes or exits the classroom.
+- Auto-advance changes component state while a close/open-round transition timer is pending.
 
 ## Requirements *(mandatory)*
 
@@ -100,6 +120,10 @@ As an operator, I can see and resolve database schema drift such as page code qu
 - **FR-012**: Mutations that can delete or hide learner records MUST require explicit confirmation and MUST prevent loss of historical classroom records.
 - **FR-013**: The implementation MUST document a page-by-page live data checklist before coding begins.
 - **FR-014**: Database contract drift MUST be caught by generated/verified types or equivalent schema checks before release.
+- **FR-015**: `/live-session` MUST route to a live session manager that can rejoin non-finished rooms and review recent finished rooms.
+- **FR-016**: Teacher console exit/end-session actions MUST clear the active round pointer, lock learner memberships, and prevent response buttons from staying enabled without a controlling teacher.
+- **FR-017**: Auto-advance MUST close the captured round and open the next playable sentence without clearing its own transition timer before the next-turn operation executes.
+- **FR-018**: Learner response buttons MUST respect current membership `can_answer` state and room `finished` state in addition to round status.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -129,6 +153,7 @@ As an operator, I can see and resolve database schema drift such as page code qu
 - **SC-004**: A learner can join a room, submit a response, close the round, and see the response in Reports under the same learner id.
 - **SC-005**: Schema drift checks identify every frontend table/RPC reference that is missing from the connected database before release.
 - **SC-006**: Removing or deactivating a learner with history preserves 100% of existing responses and progress summaries.
+- **SC-007**: A live room can be rejoined from `/live-session`, can auto-open the next sentence after a captured response, and turns learner pads off when the teacher exits or ends the session.
 
 ## Assumptions
 

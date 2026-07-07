@@ -220,7 +220,7 @@ export default function SimulatorTab({
   // Setup dependent selections
   const filteredLessons = lessons.filter(l => l.course_id === setupCourseId);
   const selectedCourse = courses.find(c => c.id === setupCourseId) || null;
-  const isErelCourse = (selectedCourse?.title || '').trim().toUpperCase() === 'EREL';
+  const isErelCourse = (selectedCourse?.title || '').trim().toUpperCase().startsWith('EREL');
   const selectedLessonId = setupLessonId || filteredLessons[0]?.id || '';
   const selectedLessonIds = isErelCourse
     ? (setupLessonIds.length > 0 ? setupLessonIds : (selectedLessonId ? [selectedLessonId] : []))
@@ -498,8 +498,6 @@ export default function SimulatorTab({
       activeRound.id !== lastAutoAdvancedRoundId
     ) {
       setAutoAdvanceCountdown(1); // short visible handoff, then auto-open the next turn
-    } else {
-      setAutoAdvanceCountdown(null);
     }
   }, [autoAdvance, activeRound?.id, roundResponses.length, lastAutoAdvancedRoundId]);
 
@@ -512,25 +510,23 @@ export default function SimulatorTab({
         setAutoAdvanceCountdown(prev => prev !== null ? prev - 1 : null);
       }, 1000);
       return () => clearTimeout(timer);
-    } else {
-      setAutoAdvanceCountdown(null);
-      if (activeRound) {
-        const roundToClose = activeRound;
-        setLastAutoAdvancedRoundId(roundToClose.id);
-        
-        const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
-        const nextSentenceId = getNextPlayableSentenceId(usedIds, roundToClose.sentence_resource_id);
+    } else if (activeRound) {
+      const roundToClose = activeRound;
+      setLastAutoAdvancedRoundId(roundToClose.id);
+      
+      const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+      const nextSentenceId = getNextPlayableSentenceId(usedIds, roundToClose.sentence_resource_id);
 
-        const launchTimer = window.setTimeout(() => {
-          void (async () => {
-            const closed = await handleCloseRound(roundToClose);
-            if (closed && nextSentenceId) {
-              await handleOpenRound(nextSentenceId);
-            }
-          })();
-        }, 350);
-        return () => window.clearTimeout(launchTimer);
-      }
+      const launchTimer = window.setTimeout(() => {
+        void (async () => {
+          setAutoAdvanceCountdown(null);
+          const closed = await handleCloseRound(roundToClose);
+          if (closed && nextSentenceId) {
+            await handleOpenRound(nextSentenceId);
+          }
+        })();
+      }, 350);
+      return () => window.clearTimeout(launchTimer);
     }
   }, [autoAdvanceCountdown, activeRound, roomRounds]);
 
@@ -832,6 +828,10 @@ export default function SimulatorTab({
       ).length
     }))
     .filter(param => param.count > 0);
+  const sortedRoomsForManager = [...rooms]
+    .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime());
+  const activeRoomsForManager = sortedRoomsForManager.filter(room => room.status !== 'finished');
+  const recentFinishedRoomsForManager = sortedRoomsForManager.filter(room => room.status === 'finished').slice(0, 5);
 
   const lockRosterAfterFirstResponse = async (round: RoomRound, capturedLearnerId: string) => {
     if (useSandbox || !activeRoom) return;
@@ -931,11 +931,12 @@ export default function SimulatorTab({
             }
           }
 
-          // 3. Update room status to round_closed
+          // 3. Update room status to round_closed and clear current pointer so learner pads wait for next turn.
           await supabase
             .from('practice_rooms')
             .update({
               status: 'round_closed',
+              current_round_id: null,
               updated_at: new Date().toISOString()
             })
             .eq('id', activeRoom?.id);
@@ -1004,11 +1005,12 @@ export default function SimulatorTab({
     } else {
       const executeFinishRoom = async () => {
         try {
-          // 1. Finish the room
+          // 1. Finish the room and clear the active round pointer so learners see the ended state.
           const { error: updRoomErr } = await supabase
             .from('practice_rooms')
             .update({
               status: 'finished',
+              current_round_id: null,
               updated_at: new Date().toISOString()
             })
             .eq('id', activeRoom.id);
@@ -1024,6 +1026,12 @@ export default function SimulatorTab({
             })
             .eq('room_id', activeRoom.id)
             .eq('status', 'open');
+
+          // 3. Turn learner pads off for the finished session.
+          await supabase
+            .from('room_memberships')
+            .update({ can_answer: false, presence_status: 'offline', updated_at: new Date().toISOString() })
+            .eq('room_id', activeRoom.id);
 
           onRefreshData();
         } catch (err: any) {
@@ -1359,7 +1367,58 @@ export default function SimulatorTab({
   };
 
   const handleCloseActiveSession = () => {
-    setActiveRoomId('');
+    if (!activeRoom) {
+      setActiveRoomId('');
+      return;
+    }
+
+    const closeConsole = async () => {
+      try {
+        window.speechSynthesis?.cancel();
+        if (!useSandbox && activeRoom.status !== 'finished') {
+          if (activeRound?.status === 'open') {
+            const closed = await handleCloseRound(activeRound);
+            if (!closed) return;
+          } else {
+            await supabase
+              .from('room_rounds')
+              .update({
+                status: 'closed',
+                closed_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .eq('room_id', activeRoom.id)
+              .eq('status', 'open');
+          }
+
+          await supabase
+            .from('room_memberships')
+            .update({ can_answer: false, presence_status: 'offline', updated_at: new Date().toISOString() })
+            .eq('room_id', activeRoom.id);
+
+          await supabase
+            .from('practice_rooms')
+            .update({
+              status: activeRoom.status === 'round_open' ? 'round_closed' : activeRoom.status,
+              current_round_id: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', activeRoom.id);
+        }
+      } catch (err: any) {
+        alert(`Could not turn off learner pads before exiting: ${err.message || String(err)}`);
+        return;
+      }
+
+      setActiveRoomId('');
+      setActiveRoom(null);
+      setActiveRound(null);
+      setRoundResponses([]);
+      setTeacherToast('');
+      onRefreshData();
+    };
+
+    void closeConsole();
   };
 
   return (
@@ -1427,7 +1486,79 @@ export default function SimulatorTab({
 
         {/* 1. ROOM CREATION / SETUP SCREEN */}
         {!activeRoom ? (
-          <div className="p-6 flex-1 flex flex-col justify-between">
+          <div className="p-6 flex-1 flex flex-col justify-between gap-5">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">Live Session Manager</h2>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    Rejoin active teacher consoles, review recent history, or keep learner pads turned off when no teacher is controlling the room.
+                  </p>
+                </div>
+                <a href="/live-session" className="text-[10px] font-bold text-red-600 hover:text-red-700 uppercase tracking-wider">
+                  /live-session
+                </a>
+              </div>
+
+              {activeRoomsForManager.length === 0 && recentFinishedRoomsForManager.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-white p-4 text-center text-xs text-slate-400">
+                  No live classroom sessions yet. Launch a room below to begin.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Active / resumable</div>
+                    {activeRoomsForManager.length === 0 ? (
+                      <div className="rounded-xl bg-white border border-slate-200 p-3 text-xs text-slate-400">No resumable sessions.</div>
+                    ) : activeRoomsForManager.slice(0, 6).map(room => (
+                      <div key={room.id} className="rounded-xl bg-white border border-slate-200 p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{room.room_code}</span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${room.status === 'round_open' ? 'bg-red-50 text-red-700' : room.status === 'round_closed' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>{room.status}</span>
+                          </div>
+                          <div className="text-xs font-bold text-slate-800 truncate mt-1">{room.title}</div>
+                          <div className="text-[10px] text-slate-400">Updated {new Date(room.updated_at || room.created_at).toLocaleString()}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveRoomId(room.id)}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black transition-colors"
+                        >
+                          Rejoin
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Recent finished history</div>
+                    {recentFinishedRoomsForManager.length === 0 ? (
+                      <div className="rounded-xl bg-white border border-slate-200 p-3 text-xs text-slate-400">Finished sessions will appear here.</div>
+                    ) : recentFinishedRoomsForManager.map(room => (
+                      <div key={room.id} className="rounded-xl bg-white border border-slate-200 p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[10px] font-black text-slate-600 bg-slate-100 px-2 py-0.5 rounded">{room.room_code}</span>
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600">finished</span>
+                          </div>
+                          <div className="text-xs font-bold text-slate-800 truncate mt-1">{room.title}</div>
+                          <div className="text-[10px] text-slate-400">Updated {new Date(room.updated_at || room.created_at).toLocaleString()}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveRoomId(room.id)}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-[10px] font-black transition-colors"
+                        >
+                          Review
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <form onSubmit={handleCreateRoomSubmit} className="space-y-4">
               <div className="border-b border-slate-100 pb-3">
                 <h2 className="text-sm font-semibold text-slate-800">Launch Live Classroom Room</h2>

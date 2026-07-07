@@ -61,6 +61,19 @@ Expected result: history remains intact and inactive learners are not offered fo
 
 Expected result: schema drift is visible and gated; no silent failure.
 
+## Scenario 6: Live session rejoin, auto-advance, and safe close
+
+1. Open `/live-session` and launch or rejoin a non-finished room.
+2. Join the room from `/learner?room_code=<code>` using an existing learner profile.
+3. Start the session and submit one learner response.
+4. Confirm the teacher canvas closes the captured round and opens the next sentence automatically without navigating away.
+5. Confirm the learner only sees safe metadata plus response buttons; no EN/VI answer text or audio controls appear.
+6. Click **Exit Console** and confirm learner response buttons lock/off.
+7. Reopen `/live-session`, rejoin the same room, then click **End Classroom Session**.
+8. Confirm the learner screen shows the classroom-ended state and cannot submit another response.
+
+Expected result: rooms are resumable from `/live-session`, next turns advance in the same teacher canvas, and learner pads turn off when the teacher exits or finishes.
+
 ## Release-Control Reminder
 
 Before any migration, hosting deploy, or function deployment:

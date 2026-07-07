@@ -25,13 +25,14 @@ import ChunksLogo from './components/ChunksLogo';
 // Icons
 import { 
   FolderOpen, Zap, BarChart2, Volume2, Settings2, Database, HelpCircle, RefreshCw, Users,
-  ChevronLeft, ChevronRight, Menu, SlidersHorizontal
+  ChevronLeft, ChevronRight, Menu, SlidersHorizontal, Activity
 } from 'lucide-react';
 
-type AppTab = 'library' | 'simulator' | 'learner' | 'history' | 'audio' | 'migrations' | 'settings';
+type AppTab = 'library' | 'simulator' | 'liveSession' | 'learner' | 'history' | 'audio' | 'migrations' | 'settings';
 
 const tabRoutes: Record<AppTab, string> = {
   simulator: '/teacher',
+  liveSession: '/live-session',
   learner: '/learner',
   library: '/library',
   history: '/reports',
@@ -45,6 +46,8 @@ const routeAliases: Record<string, AppTab> = {
   '/teacher': 'simulator',
   '/simulator': 'simulator',
   '/classroom': 'simulator',
+  '/live-session': 'liveSession',
+  '/live-sessions': 'liveSession',
   '/learner': 'learner',
   '/join': 'learner',
   '/library': 'library',
@@ -86,6 +89,18 @@ const navItems = [
       { label: 'Start Session', desc: 'Initialize standard lesson rooms' },
       { label: 'Room Manager', desc: 'Monitor active learner connections' },
       { label: 'Interactive Rounds', desc: 'Trigger oral response cycles' }
+    ]
+  },
+  {
+    id: 'liveSession' as AppTab,
+    label: 'Live Sessions',
+    shortLabel: 'Live',
+    icon: Activity,
+    description: 'Rejoin and manage active classrooms',
+    options: [
+      { label: 'Rejoin Session', desc: 'Resume active teacher consoles' },
+      { label: 'Close Learners', desc: 'Turn off response pads safely' },
+      { label: 'Session History', desc: 'Review recent room state' }
     ]
   },
   {
@@ -506,7 +521,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'simulator' && (
+            {(activeTab === 'simulator' || activeTab === 'liveSession') && (
               <SimulatorTab
                 useSandbox={useSandbox}
                 courses={courses}
