@@ -6,6 +6,8 @@ This page is an index/summary only. Always update `docs/deployment-log.md` for a
 
 ## Recent important releases
 
+- Live room next-turn response flow release: after first response capture, the teacher console shows the next speaker prompt instead of a stale waiting state.
+- Reports audit table and RFC/RAC custom fields release.
 - Firebase Hosting setup and CI/CD
 - Learner room cache fix + EREL import
 - Course rename:

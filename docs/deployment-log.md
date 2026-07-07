@@ -328,6 +328,66 @@ git pull --ff-only origin main
 
 ---
 
+## 2026-07-07 12:49 GMT+7 — Live room next-turn response flow release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `dc84fa9`  
+**Tag**: `firebase-hosting-20260707-1249-live-next-turn`  
+**Preview URL**: <https://chunks-offline--pr-3-7rmq1cqz.web.app>  
+**Production URL/version**: <https://chunks-offline.web.app> served `assets/index-DBe6dyW6.js`  
+**CI workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28844609515>  
+**Preview workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28844694493>  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28844773848>
+
+### Scope
+
+- Fix Teacher Console live-room state after the first learner response is captured.
+- When CCI Performance increments, the console no longer continues to show “Waiting for first response / auto-opening next turn”.
+- Between turns, show the next sentence preview, speaker/play control, and **Open Next Turn Speaker Prompt** fallback button.
+- In focus mode, give the main prompt canvas more width than the roster panel.
+- Add roster-side user response totals and unique responder counts.
+- Sync Wiki skeleton troubleshooting docs for the expected live-room next-turn behavior.
+
+### Validation
+
+- [x] `npx tsc --noEmit` passed locally.
+- [x] `npm run build` passed locally.
+- [x] `npm run lint` hit the known local wrapper JSON parse issue; GitHub CI validation passed.
+- [x] GitHub CI passed for commit `dc84fa9`.
+- [x] Firebase preview verified: `/`, `/reports`, and `/learner` returned HTTP 200 and app shell.
+- [x] Production verified: `/`, `/reports`, and `/learner` returned HTTP 200 and served `assets/index-DBe6dyW6.js`.
+
+### Rollback
+
+Preferred Hosting rollback: Firebase Console → project `chunks-offline` → Hosting → site `chunks-offline` → Release history → rollback to previous known-good release.
+
+Git tag redeploy rollback:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1234-reports-audit
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, return to main:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+### Notes / risks
+
+- Hosting-only release; no Supabase migration or Firebase Function deploy included.
+- Release was deployed from the clean GitHub Actions checkout at tag `firebase-hosting-20260707-1249-live-next-turn`; local workspace had unrelated in-progress files and was not used for the build.
+- GitHub Actions emitted the existing Node.js 20 deprecation annotation for upstream actions, but workflows completed successfully.
+- Bundle size warning remains non-blocking and should be handled later with route/code splitting.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
