@@ -268,6 +268,66 @@ git pull --ff-only origin main
 
 ---
 
+## 2026-07-07 12:34 GMT+7 — Reports audit table and RFC/RAC custom fields release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `e519587`  
+**Tag**: `firebase-hosting-20260707-1234-reports-audit`  
+**Preview URL**: <https://chunks-offline--pr-2-j09hkaap.web.app>  
+**Production URL/version**: <https://chunks-offline.web.app> served `assets/index-DBn0vAMH.js`  
+**CI workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28844235280>  
+**Preview workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28844269310>  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28844345469>
+
+### Scope
+
+- Compact Reports audit table columns so `CCI` and `CPD (V)` fit better in one screen.
+- Add audit table sorting by time, learner A-Z, grade, CCI result, and CPD result.
+- Add collapsible formula guide for CCI/CPD/RFC/RAC formulas.
+- Add one-click custom fields for:
+  - `RFC = red_count / total_responses`
+  - `RAC = 1 - RFC`
+- Allow custom fields such as RFC/RAC to be selected as chart Y-axis metrics.
+
+### Validation
+
+- [x] `npm run --silent lint` passed locally.
+- [x] `npm run build` passed locally.
+- [x] GitHub CI passed for commit `e519587`.
+- [x] Firebase preview verified: `/`, `/reports`, and `/learner` returned HTTP 200 and app shell.
+- [x] Production verified: `/`, `/reports`, and `/learner` returned HTTP 200 and served `assets/index-DBn0vAMH.js`.
+
+### Rollback
+
+Preferred Hosting rollback: Firebase Console → project `chunks-offline` → Hosting → site `chunks-offline` → Release history → rollback to previous known-good release.
+
+Git tag redeploy rollback:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1201-data-explorer
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+After rollback, return to main:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+### Notes / risks
+
+- Hosting-only release; no Supabase migration or Firebase Function deploy included.
+- Active Spec Kit live-data checklists still have incomplete items; Lucy explicitly requested CI/CD deployment for this UI-only release.
+- GitHub Actions emitted the existing Node.js 20 deprecation annotation for upstream actions, but workflows completed successfully.
+- Bundle size warning remains non-blocking and should be handled later with route/code splitting.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
