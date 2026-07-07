@@ -82,6 +82,35 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 ---
 
+## 2026-07-07 09:57 GMT+7 — Follow-up newest-code playable-resource release
+
+**Operator**: Lucy with Craft Agent  
+**Release tag**: `firebase-hosting-20260707-0957-latest`  
+**Production URL**: <https://chunks-offline.web.app>
+
+### Scope
+
+- Teacher Console now uses playable resources only when opening/auto-advancing rounds.
+- Live room creation can skip approved sentence resources that have no EN/VI audio at all instead of blocking the entire session when at least one playable resource exists.
+- Session totals and next-round selection count playable resources only.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [ ] Firebase preview verified
+- [ ] Production verified
+
+### Rollback
+
+Use Firebase Console Hosting release rollback, or redeploy the previous tag `firebase-hosting-20260707-0957`.
+
+### Notes / risks
+
+- This is a Hosting-only release. No Supabase migration or Firebase Function deploy is included.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>

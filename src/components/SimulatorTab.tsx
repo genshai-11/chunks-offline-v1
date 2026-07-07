@@ -244,6 +244,20 @@ export default function SimulatorTab({
     );
   };
 
+  const getPlayableResources = (items: SentenceResource[]) => items.filter(hasAnyAudio);
+
+  const availablePlayableSentenceIds = availableSentenceIds.filter(id => {
+    const resource = resources.find(r => r.id === id);
+    return resource ? hasAnyAudio(resource) : false;
+  });
+
+  const getNextPlayableSentenceId = (usedIds: Set<string>, afterSentenceId?: string | null) => {
+    const afterIndex = afterSentenceId ? availableSentenceIds.indexOf(afterSentenceId) : -1;
+    return availablePlayableSentenceIds.find(id => !usedIds.has(id) && availableSentenceIds.indexOf(id) > afterIndex)
+      || availablePlayableSentenceIds.find(id => !usedIds.has(id))
+      || null;
+  };
+
   // Load active room and subscribe to Supabase Realtime WebSocket changes.
   useEffect(() => {
     syncActiveRoomState();
@@ -470,10 +484,8 @@ export default function SimulatorTab({
       if (activeRound) {
         setLastAutoAdvancedRoundId(activeRound.id);
         
-        const currentIdx = availableSentenceIds.indexOf(activeRound.sentence_resource_id);
-        const nextSentenceId = currentIdx !== -1 && currentIdx + 1 < availableSentenceIds.length 
-          ? availableSentenceIds[currentIdx + 1] 
-          : null;
+        const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+        const nextSentenceId = getNextPlayableSentenceId(usedIds, activeRound.sentence_resource_id);
 
         // Close the current round
         handleCloseRound();
@@ -489,7 +501,7 @@ export default function SimulatorTab({
     }
   }, [autoAdvanceCountdown]);
 
-  const createLiveRoom = async (approvedResources: SentenceResource[]) => {
+  const createLiveRoom = async (approvedResources: SentenceResource[], skippedNoAudioCount = 0) => {
     const card = cciCards.find(c => c.id === setupCciCardId);
     if (!card) {
       throw new Error("Invalid or inactive CCI Card selected.");
@@ -525,7 +537,10 @@ export default function SimulatorTab({
     setActiveRoomId(roomId);
     setLearnerRoomCode(code);
     onRefreshData();
-    setTeacherToast('Live classroom launched. Start Session is ready.');
+    setTeacherToast(skippedNoAudioCount > 0
+      ? `Live classroom launched with ${approvedResources.length} playable sentences. Skipped ${skippedNoAudioCount} no-audio sentence${skippedNoAudioCount === 1 ? '' : 's'}.`
+      : 'Live classroom launched. Start Session is ready.'
+    );
   };
 
   const prepareMissingAudioAndContinue = async () => {
@@ -571,8 +586,8 @@ export default function SimulatorTab({
       if (mode === 'create') {
         await createLiveRoom(resourcesToUse);
       } else if (mode === 'start') {
-        const usedIds = new Set(roomRounds.map(r => r.sentence_resource_id));
-        const nextSentenceId = availableSentenceIds.find(id => !usedIds.has(id));
+        const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+        const nextSentenceId = getNextPlayableSentenceId(usedIds);
         if (nextSentenceId) handleOpenRound(nextSentenceId);
       }
     } finally {
@@ -611,14 +626,12 @@ export default function SimulatorTab({
           }
 
           const resourcesWithoutAnyAudio = getResourcesWithoutAnyAudio(approvedResources);
-          if (resourcesWithoutAnyAudio.length > 0) {
-            setAudioPrepMode('create');
-            setAudioPrepResources(approvedResources);
-            setAudioPrepStatus(`${resourcesWithoutAnyAudio.length} approved resources have no EN/VI audio at all. Prepare ${audioLang.toUpperCase()} TTS to launch this classroom.\n${formatMissingRequiredAudioSummary(resourcesWithoutAnyAudio)}`);
-            return;
+          const playableResources = getPlayableResources(approvedResources);
+          if (playableResources.length === 0) {
+            throw new Error(`No playable sentence resources found. Every approved sentence in this scope has no EN/VI audio.\n${formatMissingRequiredAudioSummary(resourcesWithoutAnyAudio)}`);
           }
 
-          await createLiveRoom(approvedResources);
+          await createLiveRoom(playableResources, resourcesWithoutAnyAudio.length);
         } catch (err: any) {
           alert(`Room creation failed on Supabase: ${err.message}`);
         }
@@ -728,20 +741,35 @@ export default function SimulatorTab({
 
   const handleStartOrNextRound = () => {
     if (!activeRoom || activeRound?.status === 'open') return;
+    const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+
     if (roomRounds.length === 0) {
       const snapshotResources = availableSentenceIds.map(id => resources.find(r => r.id === id)).filter(Boolean) as SentenceResource[];
       const resourcesWithoutAnyAudio = getResourcesWithoutAnyAudio(snapshotResources);
+      const playableSnapshotResources = getPlayableResources(snapshotResources);
       if (resourcesWithoutAnyAudio.length > 0) {
-        setAudioPrepMode('start');
-        setAudioPrepResources(snapshotResources);
-        setAudioPrepStatus(`${resourcesWithoutAnyAudio.length} session resources have no EN/VI audio at all. Prepare ${audioLang.toUpperCase()} TTS to start this classroom.\n${formatMissingRequiredAudioSummary(resourcesWithoutAnyAudio)}`);
-        return;
+        const playableIds = playableSnapshotResources.map(r => r.id);
+        setAvailableSentenceIds(playableIds);
+        setTeacherToast(`Skipped ${resourcesWithoutAnyAudio.length} no-audio sentence${resourcesWithoutAnyAudio.length === 1 ? '' : 's'} for this live session.`);
+
+        if (!useSandbox) {
+          supabase
+            .from('practice_rooms')
+            .update({
+              snapshot_sentence_resource_ids: playableIds,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', activeRoom.id)
+            .then(({ error }) => {
+              if (error) console.warn('Could not persist playable sentence snapshot:', error.message);
+            });
+        }
       }
     }
-    const usedIds = new Set(roomRounds.map(r => r.sentence_resource_id));
-    const nextSentenceId = availableSentenceIds.find(id => !usedIds.has(id));
+
+    const nextSentenceId = getNextPlayableSentenceId(usedIds);
     if (!nextSentenceId) {
-      alert('No unplayed sentence resources remain in this classroom session.');
+      alert('No playable unplayed sentence resources remain in this classroom session. Add EN or VI audio to continue.');
       return;
     }
     handleOpenRound(nextSentenceId);
@@ -749,7 +777,7 @@ export default function SimulatorTab({
 
   const completedRounds = roomRounds.filter(r => r.status === 'closed').length;
   const currentRoundNumber = activeRound?.status === 'open' ? activeRound.round_index : completedRounds;
-  const totalRounds = availableSentenceIds.length;
+  const totalRounds = availablePlayableSentenceIds.length;
   const sessionComplete = totalRounds > 0 && roomRounds.length >= totalRounds;
   const turnLabel = activeRound ? String(activeRound.round_index).padStart(3, '0') : String(Math.min(roomRounds.length + 1, Math.max(totalRounds, 1))).padStart(3, '0');
   const capturedTurnCount = roomResponseHistory.length;
@@ -1798,8 +1826,8 @@ export default function SimulatorTab({
                   /* SESSION CONTROL / NEXT ROUND PREVIEW */
                   <div className="border border-slate-200 rounded-xl p-4 space-y-4 flex-1 flex flex-col justify-between bg-slate-50/50">
                     {(() => {
-                      const usedIds = new Set(roomRounds.map(r => r.sentence_resource_id));
-                      const nextSentenceId = availableSentenceIds.find(id => !usedIds.has(id));
+                      const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+                      const nextSentenceId = getNextPlayableSentenceId(usedIds);
                       const nextRes = nextSentenceId ? resources.find(r => r.id === nextSentenceId) : null;
                       const nextCard = cciCards.find(c => c.id === setupCciCardId);
                       const isComplete = sessionComplete;
