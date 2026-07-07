@@ -1000,6 +1000,49 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 ---
 
+## 2026-07-07 16:30 GMT+7 — Auto-play open turn logic fix
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `d0ce32c`  
+**Tag**: `firebase-hosting-20260707-1630-autoplay-fix`  
+**Preview URL**: https://chunks-offline--preview-local-mpqkh436.web.app  
+**Production URL/version**: https://chunks-offline.web.app  
+
+### Scope
+
+- Fixed the `autoPlayAudio` feature in [src/components/SimulatorTab.tsx](file:///C:/Users/gensh/OneDrive/M%C3%A1y%20t%C3%ADnh/LUCY/PROJECT-WORKPLACE/chunks-offline-v1/src/components/SimulatorTab.tsx).
+- Modified the `useEffect` auto-play hook to only call `setLastPlayedRoundId(activeRound.id)` when `autoPlayAudio` is actually `true` and the audio playback is successfully triggered. This ensures that opening a round with `autoPlayAudio` checked as `false` and then checking it later will correctly trigger the audio playback.
+- Added direct call to `playSentenceAudio` and `setLastPlayedRoundId` inside `handleOpenRound` (in both sandbox and live database branches). Since this is executed directly within the context of the user click gesture (clicking "Launch Round"), it bypasses modern browser autoplay blocking that typically occurs when the app relies on async WebSocket realtime database synchronization state updates.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Local `npm run deploy:preview` channel deployed and verified: https://chunks-offline--preview-local-mpqkh436.web.app
+  - Verified audio play trigger immediately fires upon clicking "Launch Round" and respects the `autoPlayAudio` toggle correctly.
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+Git tag rollback example:
+
+```bash
+git fetch --tags
+git checkout firebase-hosting-20260707-1625-audio-cachebuster
+npm ci
+npm run lint
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+### Notes / risks
+
+- Low-risk UI event thread and state check adjustment.
+
+---
+
+
 
 
 ## Template for future entries

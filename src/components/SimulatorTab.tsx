@@ -472,10 +472,10 @@ export default function SimulatorTab({
   // Auto-play audio when a new round is opened for learners.
   useEffect(() => {
     if (activeRound && activeRound.status === 'open' && activeRound.id !== lastPlayedRoundId) {
-      setLastPlayedRoundId(activeRound.id);
       if (autoPlayAudio) {
         const res = resources.find(r => r.id === activeRound.sentence_resource_id);
         if (res) {
+          setLastPlayedRoundId(activeRound.id);
           const timer = setTimeout(() => {
             playSentenceAudio(res);
           }, 300);
@@ -717,7 +717,7 @@ export default function SimulatorTab({
         }
 
         if (useSandbox) {
-          sandboxDb.openRound({
+          const opened = sandboxDb.openRound({
             roomId: activeRoom.id,
             sentenceResourceId: sentenceId,
             cciStandardCardId: setupCciCardId,
@@ -728,6 +728,12 @@ export default function SimulatorTab({
           });
           setRoundStartTime(Date.now());
           onRefreshData();
+
+          const resource = resources.find(r => r.id === sentenceId);
+          if (resource && autoPlayAudio) {
+            playSentenceAudio(resource);
+            setLastPlayedRoundId(opened.id);
+          }
         } else {
           // Live Supabase implementation
           const card = cciCards.find(c => c.id === setupCciCardId);
@@ -789,6 +795,11 @@ export default function SimulatorTab({
 
           setRoundStartTime(Date.now());
           onRefreshData();
+
+          if (autoPlayAudio) {
+            playSentenceAudio(resource);
+            setLastPlayedRoundId(roundId);
+          }
         }
       return true;
     } catch (err: any) {
