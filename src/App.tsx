@@ -138,7 +138,7 @@ const navItems = [
   },
   {
     id: 'settings' as AppTab,
-    label: 'Config Settings',
+    label: 'Setting',
     shortLabel: 'Settings',
     icon: SlidersHorizontal,
     description: 'Manage performance settings, CCI & CVR parameters',

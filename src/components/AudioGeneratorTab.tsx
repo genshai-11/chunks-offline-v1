@@ -8,6 +8,7 @@ import { SentenceResource, AudioGenerationJob } from '../types';
 import { SchemaHealthResult } from '../lib/schemaHealth';
 import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { getShortSentenceCode } from '../lib/resourceCode';
+import { readTtsPreferences, writeTtsPreferences, TtsPreferences } from '../lib/ttsService';
 import { 
   Volume2, RefreshCw, CheckCircle2, AlertCircle, Cpu, Play, Search, ShieldAlert, Sparkles, Plus, Check
 } from 'lucide-react';
@@ -29,6 +30,16 @@ export default function AudioGeneratorTab({
 }: AudioGeneratorTabProps) {
   const [processingJobId, setProcessingJobId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [ttsPreferences, setTtsPreferences] = useState<TtsPreferences>(() => readTtsPreferences());
+
+  const updateTtsPreference = (language: 'en' | 'vi', patch: Partial<TtsPreferences['en']>) => {
+    const next = {
+      ...ttsPreferences,
+      [language]: { ...ttsPreferences[language], ...patch }
+    };
+    setTtsPreferences(next);
+    writeTtsPreferences(next);
+  };
 
   if (schemaHealth && !schemaHealth.ttsServiceAvailable) {
     return (
@@ -168,6 +179,44 @@ export default function AudioGeneratorTab({
           >
             Process All Queued ({jobs.filter(j => j.status === 'queued').length})
           </button>
+        </div>
+      </div>
+
+      <div className="bg-white border border-indigo-100 rounded-xl p-5 shadow-xs space-y-4">
+        <div className="flex items-center gap-2 border-b border-indigo-50 pb-3">
+          <Sparkles className="w-4 h-4 text-indigo-600" />
+          <div>
+            <h3 className="font-bold text-sm text-slate-800">TTS Provider / Model Settings</h3>
+            <p className="text-[10px] text-slate-500">Stored locally and sent with Supabase Edge Function generation requests. Defaults stay backward-compatible.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {(['en', 'vi'] as const).map(language => (
+            <div key={language} className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+              <div className="text-[10px] font-black uppercase text-slate-500">{language.toUpperCase()} voice route</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  value={ttsPreferences[language].provider}
+                  onChange={(event) => updateTtsPreference(language, { provider: event.target.value })}
+                  placeholder="provider / 9router"
+                  className="text-xs p-2 bg-white border border-slate-200 rounded-lg font-semibold"
+                />
+                <input
+                  value={ttsPreferences[language].model}
+                  onChange={(event) => updateTtsPreference(language, { model: event.target.value })}
+                  placeholder="model"
+                  className="text-xs p-2 bg-white border border-slate-200 rounded-lg font-semibold"
+                />
+                <input
+                  value={ttsPreferences[language].voice}
+                  onChange={(event) => updateTtsPreference(language, { voice: event.target.value })}
+                  placeholder="voice"
+                  className="text-xs p-2 bg-white border border-slate-200 rounded-lg font-semibold"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400">Example: provider=9router/openrouter/gemini, model=your preferred TTS model, voice=EN/VI voice id.</p>
+            </div>
+          ))}
         </div>
       </div>
 

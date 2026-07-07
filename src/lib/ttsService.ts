@@ -3,6 +3,49 @@ import { SentenceResource } from '../types';
 
 export type TtsLanguage = 'en' | 'vi';
 
+export type TtsLanguagePreference = {
+  provider: string;
+  model: string;
+  voice: string;
+};
+
+export type TtsPreferences = {
+  en: TtsLanguagePreference;
+  vi: TtsLanguagePreference;
+};
+
+export const DEFAULT_TTS_PREFERENCES: TtsPreferences = {
+  en: {
+    provider: 'google-gemini',
+    model: 'gemini-2.5-flash-preview-tts',
+    voice: 'en-US-Studio-Q'
+  },
+  vi: {
+    provider: 'google-gemini',
+    model: 'gemini-2.5-flash-preview-tts',
+    voice: 'vi-VN-Standard-A'
+  }
+};
+
+export function readTtsPreferences(): TtsPreferences {
+  try {
+    const raw = localStorage.getItem('chunks_tts_preferences');
+    if (!raw) return DEFAULT_TTS_PREFERENCES;
+    const parsed = JSON.parse(raw);
+    return {
+      en: { ...DEFAULT_TTS_PREFERENCES.en, ...(parsed.en || {}) },
+      vi: { ...DEFAULT_TTS_PREFERENCES.vi, ...(parsed.vi || {}) }
+    };
+  } catch {
+    return DEFAULT_TTS_PREFERENCES;
+  }
+}
+
+export function writeTtsPreferences(preferences: TtsPreferences) {
+  localStorage.setItem('chunks_tts_preferences', JSON.stringify(preferences));
+  window.dispatchEvent(new Event('chunks_tts_preferences_change'));
+}
+
 function getTtsAdminPin(): string {
   const meta = import.meta as any;
   const envPin = meta.env?.VITE_TTS_ADMIN_PIN || '';
@@ -26,6 +69,8 @@ export async function generateResourceAudio(resource: SentenceResource, language
   const text = language === 'vi' ? (resource.text_vi || resource.text_en || resource.text_prompt || '') : (resource.text_en || resource.text_prompt || '');
   if (!text.trim()) throw new Error(`No ${language.toUpperCase()} text available for this resource.`);
 
+  const preferences = readTtsPreferences();
+  const languagePreference = preferences[language];
   const storagePath = `audio/generated/${safePathPart(resource.sentence_code || resource.id)}.${language}.mp3`;
   const { data, error } = await supabase.functions.invoke('generate-resource-audio', {
     body: {
@@ -33,7 +78,11 @@ export async function generateResourceAudio(resource: SentenceResource, language
       language,
       text,
       storagePath,
-      adminPin
+      adminPin,
+      provider: languagePreference.provider,
+      model: languagePreference.model,
+      voice: languagePreference.voice,
+      ttsPreferences: languagePreference
     }
   });
 
@@ -55,6 +104,9 @@ export async function generateResourceAudio(resource: SentenceResource, language
   return {
     ...data,
     publicUrl,
-    storagePath
+    storagePath,
+    provider: languagePreference.provider,
+    model: languagePreference.model,
+    voice: languagePreference.voice
   };
 }

@@ -10,8 +10,10 @@ import { REQUESTED_LEARNER_NAMES, findDuplicateLearnerNames, getMissingRequested
 import { 
   Sliders, Edit2, Trash2, Plus, Settings2, SlidersHorizontal, 
   Sparkles, CheckCircle2, Smartphone, Eye, Info, ChevronRight, RotateCcw, AlertCircle, Users,
-  CheckSquare, Square, MinusSquare
+  CheckSquare, Square, MinusSquare, ArrowUp, ArrowDown
 } from 'lucide-react';
+
+type LearnerLayoutModule = 'summary' | 'metadata' | 'status' | 'responseButtons' | 'formula';
 
 type LearnerUiSettings = {
   showSummaryCard: boolean;
@@ -20,7 +22,12 @@ type LearnerUiSettings = {
   showHighestCpd: boolean;
   showRealtimeCalculationLogic: boolean;
   allowCreateNewLearnerOnJoin: boolean;
+  layoutOrder: LearnerLayoutModule[];
+  cpdFormulaOperator: 'multiply' | 'add' | 'weighted';
+  cpdFormulaWeight: number;
 };
+
+const DEFAULT_LEARNER_LAYOUT_ORDER: LearnerLayoutModule[] = ['summary', 'metadata', 'status', 'responseButtons', 'formula'];
 
 const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   showSummaryCard: true,
@@ -28,13 +35,24 @@ const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   showColorCounts: true,
   showHighestCpd: true,
   showRealtimeCalculationLogic: true,
-  allowCreateNewLearnerOnJoin: false
+  allowCreateNewLearnerOnJoin: false,
+  layoutOrder: DEFAULT_LEARNER_LAYOUT_ORDER,
+  cpdFormulaOperator: 'multiply',
+  cpdFormulaWeight: 1
 };
 
 function readLearnerUiSettings(): LearnerUiSettings {
   try {
     const raw = localStorage.getItem('chunks_learner_ui_settings');
-    return raw ? { ...DEFAULT_LEARNER_UI_SETTINGS, ...JSON.parse(raw) } : DEFAULT_LEARNER_UI_SETTINGS;
+    if (!raw) return DEFAULT_LEARNER_UI_SETTINGS;
+    const parsed = JSON.parse(raw);
+    const safeOrder = Array.isArray(parsed.layoutOrder)
+      ? [
+          ...parsed.layoutOrder.filter((item: string) => DEFAULT_LEARNER_LAYOUT_ORDER.includes(item as LearnerLayoutModule)),
+          ...DEFAULT_LEARNER_LAYOUT_ORDER.filter(item => !parsed.layoutOrder.includes(item))
+        ]
+      : DEFAULT_LEARNER_LAYOUT_ORDER;
+    return { ...DEFAULT_LEARNER_UI_SETTINGS, ...parsed, layoutOrder: safeOrder };
   } catch {
     return DEFAULT_LEARNER_UI_SETTINGS;
   }
@@ -324,11 +342,11 @@ export default function SettingsTab({
   // --- CCI State ---
   const [editingCciId, setEditingCciId] = useState<string | null>(null);
   const [newCciLabel, setNewCciLabel] = useState<string>('');
-  const [newCciCategory, setNewCciCategory] = useState<string>('pronunciation');
+  const [newCciCategory, setNewCciCategory] = useState<string>('M');
   const [newCciValue, setNewCciValue] = useState<number>(10);
 
   const [editCciLabel, setEditCciLabel] = useState<string>('');
-  const [editCciCategory, setEditCciCategory] = useState<string>('pronunciation');
+  const [editCciCategory, setEditCciCategory] = useState<string>('M');
   const [editCciValue, setEditCciValue] = useState<number>(10);
 
   // --- CVR State ---
@@ -365,12 +383,29 @@ export default function SettingsTab({
   const [mockCvrValue, setMockCvrValue] = useState<number>(1.5);
   const [mockReflectionSec, setMockReflectionSec] = useState<number>(3.5);
   const [learnerUiSettings, setLearnerUiSettings] = useState<LearnerUiSettings>(() => readLearnerUiSettings());
+  const cciCategoryOptions = Array.from(new Set(['M', 'S', 'E', ...cciCards.map(card => card.category_id).filter(Boolean)])).sort();
+  const learnerLayoutLabels: Record<LearnerLayoutModule, string> = {
+    summary: 'Summary Card',
+    metadata: 'Active Turn Metadata',
+    status: 'Status Banner',
+    responseButtons: 'Response Buttons',
+    formula: 'Real-Time Calculation Logic'
+  };
 
   const updateLearnerUiSettings = (patch: Partial<LearnerUiSettings>) => {
     const next = { ...learnerUiSettings, ...patch };
     setLearnerUiSettings(next);
     localStorage.setItem('chunks_learner_ui_settings', JSON.stringify(next));
     window.dispatchEvent(new Event('chunks_learner_ui_settings_change'));
+  };
+
+  const moveLearnerLayoutModule = (module: LearnerLayoutModule, direction: -1 | 1) => {
+    const order = [...learnerUiSettings.layoutOrder];
+    const index = order.indexOf(module);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return;
+    [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+    updateLearnerUiSettings({ layoutOrder: order });
   };
 
   // Load performance parameters from sandboxDb
@@ -402,9 +437,9 @@ export default function SettingsTab({
     const isEdit = !!editingCciId;
     const labelToSave = isEdit ? editCciLabel : newCciLabel;
     const valueToSave = isEdit ? editCciValue : newCciValue;
-    const categoryToSave = isEdit ? editCciCategory : newCciCategory;
+    const categoryToSave = (isEdit ? editCciCategory : newCciCategory).trim();
 
-    if (!labelToSave.trim()) return;
+    if (!labelToSave.trim() || !categoryToSave) return;
 
     if (useSandbox) {
       let cards = [...sandboxDb.cciStandardCards];
@@ -430,11 +465,22 @@ export default function SettingsTab({
       sandboxDb.cciStandardCards = cards;
       setNewCciLabel('');
       setNewCciValue(10);
+      setNewCciCategory('M');
       setEditingCciId(null);
       onRefreshData();
     } else {
       const executeSaveCci = async () => {
         try {
+          const { error: categoryError } = await supabase
+            .from('cci_categories')
+            .upsert({
+              id: categoryToSave,
+              label: categoryToSave,
+              active: true,
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'id' });
+          if (categoryError) throw categoryError;
+
           if (isEdit) {
             const { error } = await supabase
               .from('cci_standard_cards')
@@ -462,6 +508,7 @@ export default function SettingsTab({
           }
           setNewCciLabel('');
           setNewCciValue(10);
+          setNewCciCategory('M');
           setEditingCciId(null);
           onRefreshData();
         } catch (err: any) {
@@ -739,7 +786,19 @@ export default function SettingsTab({
 
   const calcMockCpdResult = () => {
     const cci = calcMockCciResult();
-    return Math.round((cci * mockCvrValue) * 100) / 100;
+    let result = cci * mockCvrValue;
+    if (learnerUiSettings.cpdFormulaOperator === 'add') {
+      result = cci + mockCvrValue;
+    } else if (learnerUiSettings.cpdFormulaOperator === 'weighted') {
+      result = cci * mockCvrValue * learnerUiSettings.cpdFormulaWeight;
+    }
+    return Math.round(result * 100) / 100;
+  };
+
+  const getMockFormulaLabel = () => {
+    if (learnerUiSettings.cpdFormulaOperator === 'add') return 'CCI + CVR';
+    if (learnerUiSettings.cpdFormulaOperator === 'weighted') return `CCI × CVR × ${learnerUiSettings.cpdFormulaWeight}`;
+    return 'CCI × CVR';
   };
 
   return (
@@ -1012,7 +1071,7 @@ export default function SettingsTab({
                       setEditingCciId(null);
                       setEditCciLabel('');
                       setEditCciValue(10);
-                      setEditCciCategory('pronunciation');
+                      setEditCciCategory('M');
                     }}
                     className="text-[10px] text-slate-400 hover:text-slate-800 font-bold"
                   >
@@ -1036,16 +1095,28 @@ export default function SettingsTab({
 
                 <div className="sm:col-span-7">
                   <label className="text-[9px] font-bold text-slate-400 uppercase">Scoring Rubric Category</label>
-                  <select
-                    value={editingCciId ? editCciCategory : newCciCategory}
-                    onChange={(e) => editingCciId ? setEditCciCategory(e.target.value) : setNewCciCategory(e.target.value)}
-                    className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700"
-                  >
-                    <option value="pronunciation">Pronunciation Accuracy</option>
-                    <option value="fluency">Oral Fluency & Pauses</option>
-                    <option value="vocabulary">Vocabulary Range</option>
-                    <option value="grammar">Grammar & Structure</option>
-                  </select>
+                  <div className="grid grid-cols-[110px_1fr] gap-2">
+                    <select
+                      value={editingCciId ? editCciCategory : newCciCategory}
+                      onChange={(e) => editingCciId ? setEditCciCategory(e.target.value) : setNewCciCategory(e.target.value)}
+                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700 font-black"
+                    >
+                      {cciCategoryOptions.map(category => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                    <input
+                      list="cci-category-options"
+                      value={editingCciId ? editCciCategory : newCciCategory}
+                      onChange={(e) => editingCciId ? setEditCciCategory(e.target.value.toUpperCase()) : setNewCciCategory(e.target.value.toUpperCase())}
+                      placeholder="M, S, E, or custom"
+                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 focus:outline-none text-slate-700 font-semibold"
+                    />
+                  </div>
+                  <datalist id="cci-category-options">
+                    {cciCategoryOptions.map(category => <option key={category} value={category} />)}
+                  </datalist>
+                  <p className="text-[9px] text-slate-400 mt-1">Use M / S / E by default. You can type a new category code when needed.</p>
                 </div>
 
                 <div className="sm:col-span-5">
@@ -1496,13 +1567,62 @@ export default function SettingsTab({
                 </label>
                 <label className="flex items-center gap-2 p-2 rounded-lg bg-indigo-50 border border-indigo-100 cursor-pointer">
                   <input type="checkbox" checked={learnerUiSettings.showRealtimeCalculationLogic} onChange={(e) => updateLearnerUiSettings({ showRealtimeCalculationLogic: e.target.checked })} />
-                  <span className="font-bold text-indigo-700">Show Real-Time Logic</span>
+                  <span className="font-bold text-indigo-700">Show Real-Time Calculation Logic</span>
                 </label>
                 <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-100 cursor-pointer sm:col-span-2">
                   <input type="checkbox" checked={learnerUiSettings.allowCreateNewLearnerOnJoin} onChange={(e) => updateLearnerUiSettings({ allowCreateNewLearnerOnJoin: e.target.checked })} />
                   <span className="font-bold text-amber-800">Allow learners to create a new profile from Join Room</span>
                 </label>
               </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-black uppercase text-slate-500">CPD formula preview</div>
+                    <div className="text-[10px] text-slate-400">Affects preview/config only; historical response rows are unchanged.</div>
+                  </div>
+                  <span className="text-[10px] font-mono font-black text-red-600 bg-white border border-red-100 px-2 py-0.5 rounded-full">{getMockFormulaLabel()}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={learnerUiSettings.cpdFormulaOperator}
+                    onChange={(e) => updateLearnerUiSettings({ cpdFormulaOperator: e.target.value as LearnerUiSettings['cpdFormulaOperator'] })}
+                    className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:outline-none font-semibold"
+                  >
+                    <option value="multiply">Default: CCI × CVR</option>
+                    <option value="add">Experimental: CCI + CVR</option>
+                    <option value="weighted">Weighted: CCI × CVR × Weight</option>
+                  </select>
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    value={learnerUiSettings.cpdFormulaWeight}
+                    onChange={(e) => updateLearnerUiSettings({ cpdFormulaWeight: Number(e.target.value) || 1 })}
+                    className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500 focus:outline-none font-semibold"
+                    aria-label="CPD formula weight"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 space-y-2">
+                <div className="text-[10px] font-black uppercase text-indigo-700">Learner Screen Live Preview layout order</div>
+                <div className="space-y-1.5">
+                  {learnerUiSettings.layoutOrder.map((module, index) => (
+                    <div key={module} className="flex items-center justify-between gap-2 bg-white border border-indigo-100 rounded-lg px-2 py-1.5">
+                      <span className="text-xs font-bold text-slate-700">{index + 1}. {learnerLayoutLabels[module]}</span>
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => moveLearnerLayoutModule(module, -1)} disabled={index === 0} className="p-1 rounded bg-slate-50 text-slate-500 hover:text-indigo-700 disabled:opacity-30">
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+                        <button type="button" onClick={() => moveLearnerLayoutModule(module, 1)} disabled={index === learnerUiSettings.layoutOrder.length - 1} className="p-1 rounded bg-slate-50 text-slate-500 hover:text-indigo-700 disabled:opacity-30">
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <p className="text-[10px] text-slate-500 leading-relaxed">
                 These frontend settings are saved locally and apply immediately to the Learner Terminal preview and live learner screen. Keep new-profile creation off when you want strict roster-only progress tracking.
               </p>
@@ -1537,7 +1657,7 @@ export default function SettingsTab({
                 </div>
 
                 {learnerUiSettings.showSummaryCard && (
-                  <div className="bg-slate-950 text-white rounded-xl p-3 space-y-2 mt-2">
+                  <div className="bg-slate-950 text-white rounded-xl p-3 space-y-2 mt-2" style={{ order: learnerUiSettings.layoutOrder.indexOf('summary') }}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-black truncate">{learnerUiSettings.summaryTitle}</span>
                       <span className="text-[9px] font-mono font-bold bg-white/10 px-2 py-0.5 rounded-full">12 answered</span>
@@ -1567,7 +1687,7 @@ export default function SettingsTab({
                 )}
 
                 {/* Safe learner metadata only */}
-                <div className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-3xs space-y-2 mt-2">
+                <div className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-3xs space-y-2 mt-2" style={{ order: learnerUiSettings.layoutOrder.indexOf('metadata') }}>
                   <div className="flex justify-between items-center text-[8px] font-bold text-slate-400 uppercase">
                     <span>Active Turn Metadata</span>
                     <span className="bg-slate-100 text-slate-600 px-1.5 rounded font-mono">TURN 001</span>
@@ -1589,14 +1709,14 @@ export default function SettingsTab({
                 </div>
 
                 {/* Subheading / Status */}
-                <div className="text-center py-2.5">
+                <div className="text-center py-2.5" style={{ order: learnerUiSettings.layoutOrder.indexOf('status') }}>
                   <span className="text-[10px] font-bold text-indigo-700 uppercase bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-full block">
                     ⚡ First Responder Active! Tap Score Grade
                   </span>
                 </div>
 
                 {/* ACTIVE LIVE BUTTONS INNER SIMULATION */}
-                <div className="space-y-3">
+                <div className="space-y-3" style={{ order: learnerUiSettings.layoutOrder.indexOf('responseButtons') }}>
                   <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block text-center">
                     Simulated Response Grid:
                   </span>
@@ -1631,7 +1751,7 @@ export default function SettingsTab({
 
                 {/* Simulated Formulas preview on button press */}
                 {learnerUiSettings.showRealtimeCalculationLogic && (
-                  <div className="mt-4 bg-slate-900 text-slate-200 p-3 rounded-xl border border-slate-800 text-[10px] space-y-1.5 font-mono">
+                  <div className="mt-4 bg-slate-900 text-slate-200 p-3 rounded-xl border border-slate-800 text-[10px] space-y-1.5 font-mono" style={{ order: learnerUiSettings.layoutOrder.indexOf('formula') }}>
                     <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider border-b border-slate-800 pb-1">
                       Real-Time Calculation Logic
                     </div>
@@ -1653,7 +1773,7 @@ export default function SettingsTab({
                     </div>
                     <div className="flex justify-between text-emerald-400 font-bold">
                       <span>Final CPD Score:</span>
-                      <span>CCI * CVR = {calcMockCpdResult()}</span>
+                      <span>{getMockFormulaLabel()} = {calcMockCpdResult()}</span>
                     </div>
                   </div>
                 )}

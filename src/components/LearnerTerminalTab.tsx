@@ -10,6 +10,8 @@ import { normalizeLearnerName } from '../lib/liveData';
 import { getShortSentenceCode } from '../lib/resourceCode';
 import { Users, Clock, LogIn, LogOut, Lock, CheckCircle2, BarChart3, Award, Search, UserCheck } from 'lucide-react';
 
+type LearnerLayoutModule = 'summary' | 'metadata' | 'status' | 'responseButtons' | 'formula';
+
 type LearnerUiSettings = {
   showSummaryCard: boolean;
   summaryTitle: string;
@@ -17,7 +19,12 @@ type LearnerUiSettings = {
   showHighestCpd: boolean;
   showRealtimeCalculationLogic: boolean;
   allowCreateNewLearnerOnJoin: boolean;
+  layoutOrder: LearnerLayoutModule[];
+  cpdFormulaOperator: 'multiply' | 'add' | 'weighted';
+  cpdFormulaWeight: number;
 };
+
+const DEFAULT_LEARNER_LAYOUT_ORDER: LearnerLayoutModule[] = ['summary', 'metadata', 'status', 'responseButtons', 'formula'];
 
 const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   showSummaryCard: true,
@@ -25,13 +32,24 @@ const DEFAULT_LEARNER_UI_SETTINGS: LearnerUiSettings = {
   showColorCounts: true,
   showHighestCpd: true,
   showRealtimeCalculationLogic: true,
-  allowCreateNewLearnerOnJoin: false
+  allowCreateNewLearnerOnJoin: false,
+  layoutOrder: DEFAULT_LEARNER_LAYOUT_ORDER,
+  cpdFormulaOperator: 'multiply',
+  cpdFormulaWeight: 1
 };
 
 function readLearnerUiSettings(): LearnerUiSettings {
   try {
     const raw = localStorage.getItem('chunks_learner_ui_settings');
-    return raw ? { ...DEFAULT_LEARNER_UI_SETTINGS, ...JSON.parse(raw) } : DEFAULT_LEARNER_UI_SETTINGS;
+    if (!raw) return DEFAULT_LEARNER_UI_SETTINGS;
+    const parsed = JSON.parse(raw);
+    const safeOrder = Array.isArray(parsed.layoutOrder)
+      ? [
+          ...parsed.layoutOrder.filter((item: string) => DEFAULT_LEARNER_LAYOUT_ORDER.includes(item as LearnerLayoutModule)),
+          ...DEFAULT_LEARNER_LAYOUT_ORDER.filter(item => !parsed.layoutOrder.includes(item))
+        ]
+      : DEFAULT_LEARNER_LAYOUT_ORDER;
+    return { ...DEFAULT_LEARNER_UI_SETTINGS, ...parsed, layoutOrder: safeOrder };
   } catch {
     return DEFAULT_LEARNER_UI_SETTINGS;
   }

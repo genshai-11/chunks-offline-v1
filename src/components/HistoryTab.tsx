@@ -146,6 +146,7 @@ export default function HistoryTab({
   // Custom Dynamic Room Overview Chart Builder States
   const [roomChartMetric, setRoomChartMetric] = useState<'cpd' | 'redRatio' | 'completion' | 'submissions'>('cpd');
   const [roomChartType, setRoomChartType] = useState<'bar' | 'line' | 'area'>('bar');
+  const [learnerSentenceSortBy, setLearnerSentenceSortBy] = useState<'round' | 'cvr' | 'cci'>('round');
   const [progressChartTemplate, setProgressChartTemplate] = useState<ProgressChartTemplate>('learning_curve');
 
   const applyDatePreset = (preset: 'all' | 'today' | 'last7' | 'last30') => {
@@ -937,6 +938,40 @@ export default function HistoryTab({
     });
   }, [leaderboardData, roomChartMetric]);
 
+  const learnerSentenceChartData = useMemo(() => {
+    const sorted = [...filteredHistory].sort((a, b) => {
+      const roundA = Number(a.round?.round_index || 0);
+      const roundB = Number(b.round?.round_index || 0);
+      if (learnerSentenceSortBy === 'cvr') {
+        const diff = Number(a.cvr_value || 0) - Number(b.cvr_value || 0);
+        if (diff !== 0) return diff;
+      } else if (learnerSentenceSortBy === 'cci') {
+        const diff = Number(a.cci_standard_x || 0) - Number(b.cci_standard_x || 0);
+        if (diff !== 0) return diff;
+      }
+      if (roundA !== roundB) return roundA - roundB;
+      return new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime();
+    });
+
+    return sorted.map((item, index) => ({
+      order: index + 1,
+      name: learnerSentenceSortBy === 'round'
+        ? `R${item.round?.round_index || index + 1}`
+        : learnerSentenceSortBy === 'cvr'
+          ? `Ω${formatCompactNumber(item.cvr_value)}`
+          : `X${formatCompactNumber(item.cci_standard_x)}`,
+      sentence: getShortSentenceCode(item.sentence?.sentence_code, item.sentence?.order_index),
+      fullSentenceCode: item.sentence?.sentence_code || '',
+      learner: item.learner?.display_name || 'Anonymous',
+      round: item.round?.round_index || index + 1,
+      cpd: Math.round(Number(item.cpd_result || 0) * 10) / 10,
+      cvr: Number(item.cvr_value || 0),
+      cci: Number(item.cci_standard_x || 0),
+      performanceY: Number(item.performance_y || 0),
+      grade: item.response_color || 'red'
+    })).slice(0, 120);
+  }, [filteredHistory, learnerSentenceSortBy]);
+
   const reportSubTabs = [
     { id: 'room-overview', label: 'Tổng quan', icon: Calendar },
     { id: 'leaderboard', label: 'Live-room', icon: Award },
@@ -1328,6 +1363,72 @@ export default function HistoryTab({
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                  <ArrowUpDown className="w-4 h-4 text-indigo-600" />
+                  Learner Sentence Timeline — CPD by sentence point
+                </h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">Use this when a learner has 24+ responses: sort by real round order, CVR Ω ascending, or CCI Standard X ascending to see CPD movement and grade color per sentence.</p>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                Sort X:
+                <select
+                  value={learnerSentenceSortBy}
+                  onChange={(event) => setLearnerSentenceSortBy(event.target.value as any)}
+                  className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 cursor-pointer"
+                >
+                  <option value="round">Round / time order</option>
+                  <option value="cvr">CVR Ω ascending</option>
+                  <option value="cci">CCI Standard X ascending</option>
+                </select>
+              </label>
+            </div>
+            <div className="w-full h-80">
+              {learnerSentenceChartData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-xs text-slate-400 italic">No sentence responses match current filters.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                  <ScatterChart margin={{ top: 28, right: 20, left: -18, bottom: 28 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis
+                      type="number"
+                      dataKey="order"
+                      tick={{ fontSize: 9 }}
+                      stroke="#94a3b8"
+                      tickFormatter={(value) => learnerSentenceChartData[Number(value) - 1]?.name || String(value)}
+                    />
+                    <YAxis type="number" dataKey="cpd" name="CPD" unit="V" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                    <Tooltip
+                      cursor={{ strokeDasharray: '3 3' }}
+                      content={({ active, payload }: any) => {
+                        if (!active || !payload?.length) return null;
+                        const row = payload[0].payload;
+                        return (
+                          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] shadow-sm">
+                            <div className="font-black text-slate-800 mb-1">{row.learner} • {row.sentence} • R{row.round}</div>
+                            <div className="font-mono text-red-600 font-bold">CPD: {formatCompactNumber(row.cpd)}V</div>
+                            <div className="font-mono text-emerald-600">CVR: Ω{formatCompactNumber(row.cvr)}</div>
+                            <div className="font-mono text-indigo-600">CCI X: {formatCompactNumber(row.cci)} • Y: {row.performanceY}</div>
+                            <div className="font-mono text-slate-500 capitalize">Grade: {row.grade}</div>
+                            {row.fullSentenceCode && <div className="font-mono text-slate-400 mt-1">{row.fullSentenceCode}</div>}
+                          </div>
+                        );
+                      }}
+                    />
+                    <Scatter name="Sentence responses" data={learnerSentenceChartData} line={{ stroke: '#94a3b8', strokeWidth: 1.5 }}>
+                      <LabelList dataKey="sentence" position="top" style={{ fill: '#334155', fontSize: 9, fontWeight: 800 }} />
+                      {learnerSentenceChartData.map((entry, index) => (
+                        <Cell key={`learner-sentence-point-${index}`} fill={getGradeColor(entry.grade)} />
+                      ))}
+                    </Scatter>
+                  </ScatterChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 

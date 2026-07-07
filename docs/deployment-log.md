@@ -388,6 +388,75 @@ git pull --ff-only origin main
 
 ---
 
+## 2026-07-07 12:56 GMT+7 — Supabase CCI categories M/S/E migration
+
+**Operator**: Lucy with Craft Agent  
+**Supabase project**: `ftfxekdxeoxizoyxuqoz`  
+**Hosting deploy**: Not included  
+**Firebase Functions deploy**: Not included
+
+### Scope
+
+- Replace legacy CCI category `standard` with simplified categories:
+  - `M`
+  - `S`
+  - `E`
+- Preserve existing `cci_standard_cards` rows to avoid breaking `room_rounds` foreign-key history.
+- Reassign existing cards:
+  - `1-ON-1` / X=10 → `M`
+  - `RPD FREE` / X=15 → `S`
+  - `n chunks` / X=30 → `E`
+- Delete old category row `standard` only after no cards referenced it.
+
+### Validation
+
+- [x] Lucy explicitly confirmed: “Apply safe CCI MSE migration”.
+- [x] Verified pre-migration card references: all 3 cards had existing `room_rounds` references.
+- [x] Applied FK-safe transaction; no CCI card rows were deleted.
+- [x] Verified categories after migration: `E`, `M`, `S`.
+- [x] Verified CCI cards after migration:
+  - `1-ON-1`: category `M`, referenced rounds `42`
+  - `RPD FREE`: category `S`, referenced rounds `40`
+  - `n chunks`: category `E`, referenced rounds `40`
+- [x] Verified legacy `standard` card references count is `0`.
+
+### Rollback SQL
+
+```sql
+begin;
+
+insert into public.cci_categories (id, label, active, created_at, updated_at)
+values ('standard', 'CCI Standard', true, now(), now())
+on conflict (id) do update set
+  label = excluded.label,
+  active = true,
+  updated_at = now();
+
+update public.cci_standard_cards
+set category_id = 'standard', updated_at = now()
+where id in (
+  'd3e9d39d-2b29-435d-9648-5b03e63f5e1a',
+  '288d85a3-399c-4024-bfef-9810c7ad1af5',
+  'a4793913-0ae0-4b13-ba48-3b1b173c805e'
+);
+
+delete from public.cci_categories
+where id in ('M', 'S', 'E')
+  and not exists (
+    select 1 from public.cci_standard_cards where category_id in ('M', 'S', 'E')
+  );
+
+commit;
+```
+
+### Notes / risks
+
+- This is a live Supabase data update only; no schema migration, Hosting deploy, or Function deploy included.
+- Historical room/report references are preserved because card IDs were not changed or deleted.
+- Current production Hosting may still have older Settings UI until the pending frontend changes are committed/deployed.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
