@@ -497,7 +497,7 @@ export default function SimulatorTab({
       roundResponses.length > 0 && 
       activeRound.id !== lastAutoAdvancedRoundId
     ) {
-      setAutoAdvanceCountdown(0); // default: move to the next turn immediately after capture
+      setAutoAdvanceCountdown(1); // short visible handoff, then auto-open the next turn
     } else {
       setAutoAdvanceCountdown(null);
     }
@@ -515,24 +515,24 @@ export default function SimulatorTab({
     } else {
       setAutoAdvanceCountdown(null);
       if (activeRound) {
-        setLastAutoAdvancedRoundId(activeRound.id);
+        const roundToClose = activeRound;
+        setLastAutoAdvancedRoundId(roundToClose.id);
         
         const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
-        const nextSentenceId = getNextPlayableSentenceId(usedIds, activeRound.sentence_resource_id);
+        const nextSentenceId = getNextPlayableSentenceId(usedIds, roundToClose.sentence_resource_id);
 
-        // Close the current round
-        handleCloseRound();
-
-        // Launch the next round after a small delay
-        if (nextSentenceId) {
-          const launchTimer = setTimeout(() => {
-            handleOpenRound(nextSentenceId);
-          }, 1200);
-          return () => clearTimeout(launchTimer);
-        }
+        const launchTimer = window.setTimeout(() => {
+          void (async () => {
+            const closed = await handleCloseRound(roundToClose);
+            if (closed && nextSentenceId) {
+              await handleOpenRound(nextSentenceId);
+            }
+          })();
+        }, 350);
+        return () => window.clearTimeout(launchTimer);
       }
     }
-  }, [autoAdvanceCountdown]);
+  }, [autoAdvanceCountdown, activeRound, roomRounds]);
 
   const createLiveRoom = async (approvedResources: SentenceResource[], skippedNoAudioCount = 0) => {
     const card = cciCards.find(c => c.id === setupCciCardId);
@@ -674,11 +674,10 @@ export default function SimulatorTab({
   };
 
   // 2. Open Round Trigger
-  const handleOpenRound = (sentenceId: string) => {
-    if (!activeRoom) return;
+  const handleOpenRound = async (sentenceId: string): Promise<boolean> => {
+    if (!activeRoom) return false;
     
-    const executeOpenRound = async () => {
-      try {
+    try {
         // Determine assigned learner if capture mode is assigned
         let assignedLearnerId: string | null = null;
         if (activeRoom.default_response_capture_mode === 'assigned' && activeRoster.length > 0) {
@@ -765,14 +764,14 @@ export default function SimulatorTab({
           setRoundStartTime(Date.now());
           onRefreshData();
         }
-      } catch (err: any) {
-        alert(err.message);
-      }
-    };
-    executeOpenRound();
+      return true;
+    } catch (err: any) {
+      alert(err.message);
+      return false;
+    }
   };
 
-  const handleStartOrNextRound = () => {
+  const handleStartOrNextRound = async () => {
     if (!activeRoom || activeRound?.status === 'open') return;
     const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
 
@@ -805,7 +804,7 @@ export default function SimulatorTab({
       alert('No playable unplayed sentence resources remain in this classroom session. Add EN or VI audio to continue.');
       return;
     }
-    handleOpenRound(nextSentenceId);
+    await handleOpenRound(nextSentenceId);
   };
 
   const completedRounds = roomRounds.filter(r => r.status === 'closed').length;
@@ -816,6 +815,10 @@ export default function SimulatorTab({
   const capturedTurnCount = roomResponseHistory.length;
   const activeLearnerCount = activeRoster.filter(m => m.presence_status === 'online').length;
   const uniqueRespondingLearnerCount = new Set(roomResponseHistory.map(resp => resp.learner_id)).size;
+  const responseCountByLearnerId = roomResponseHistory.reduce<Record<string, number>>((acc, resp) => {
+    acc[resp.learner_id] = (acc[resp.learner_id] || 0) + 1;
+    return acc;
+  }, {});
   const latestCapturedResponse = [...roomResponseHistory]
     .sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime())[0] || null;
   const hasCapturedResponseInSession = capturedTurnCount > 0;
@@ -844,19 +847,20 @@ export default function SimulatorTab({
   };
 
   // 3. Close Round Trigger
-  const handleCloseRound = () => {
-    if (!activeRound) return;
+  const handleCloseRound = async (roundToClose: RoomRound | null = activeRound): Promise<boolean> => {
+    if (!roundToClose) return false;
     if (useSandbox) {
       try {
-        sandboxDb.closeRound(activeRound.id);
+        sandboxDb.closeRound(roundToClose.id);
         setRoundStartTime(0);
         onRefreshData();
+        return true;
       } catch (err: any) {
         alert(err.message);
+        return false;
       }
     } else {
-      const executeClose = async () => {
-        try {
+      try {
           // 1. Set round to closed
           const { error: updRoundErr } = await supabase
             .from('room_rounds')
@@ -865,14 +869,14 @@ export default function SimulatorTab({
               closed_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
             })
-            .eq('id', activeRound.id);
+            .eq('id', roundToClose.id);
           if (updRoundErr) throw updRoundErr;
 
           // 2. Find and finalize response if any exists
           const { data: respList } = await supabase
             .from('learner_responses')
             .select('*')
-            .eq('round_id', activeRound.id)
+            .eq('round_id', roundToClose.id)
             .limit(1);
 
           if (respList && respList.length > 0) {
@@ -891,7 +895,7 @@ export default function SimulatorTab({
             await supabase
               .from('room_rounds')
               .update({ captured_learner_id: resp.learner_id })
-              .eq('id', activeRound.id);
+              .eq('id', roundToClose.id);
 
             // Update Learner Progress
             const { data: progList } = await supabase
@@ -938,13 +942,52 @@ export default function SimulatorTab({
 
           setRoundStartTime(0);
           onRefreshData();
-        } catch (err: any) {
-          alert("Failed to close round on Supabase: " + err.message);
-        }
-      };
-      executeClose();
+          return true;
+      } catch (err: any) {
+        alert("Failed to close round on Supabase: " + err.message);
+        return false;
+      }
     }
   };
+
+  // Keyboard shortcuts for smoother teacher flow:
+  // Space = play the current/next speaker prompt, ArrowRight = open next turn when between turns.
+  useEffect(() => {
+    if (!activeRoom) return;
+
+    const isTypingTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+
+      if (event.code === 'Space') {
+        const promptResource = activeRound?.status === 'open'
+          ? resources.find(r => r.id === activeRound.sentence_resource_id)
+          : (() => {
+              const usedIds = new Set<string>(roomRounds.map(r => String(r.sentence_resource_id)));
+              const nextSentenceId = getNextPlayableSentenceId(usedIds);
+              return nextSentenceId ? resources.find(r => r.id === nextSentenceId) : null;
+            })();
+
+        if (promptResource) {
+          event.preventDefault();
+          playSentenceAudio(promptResource);
+        }
+      }
+
+      if (event.code === 'ArrowRight' && activeRound?.status !== 'open' && !sessionComplete) {
+        event.preventDefault();
+        void handleStartOrNextRound();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeRoom, activeRound, resources, roomRounds, sessionComplete]);
 
   // 4. Finish Room Trigger
   const handleFinishRoom = () => {
@@ -1778,14 +1821,20 @@ export default function SimulatorTab({
                     {activeRoster.length === 0 ? (
                       <span className="text-[11px] text-slate-400 block text-center py-4">Waiting for students to join...</span>
                     ) : (
-                      activeRoster.map(m => (
-                        <div key={m.id} className="flex items-center justify-between p-1.5 bg-white border border-slate-100 rounded text-xs">
-                          <span className="font-semibold text-slate-700">{m.learner.display_name}</span>
-                          <span className={`text-[9px] px-1 rounded font-bold ${m.can_answer ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-                            {m.can_answer ? 'Online' : 'Locked'}
-                          </span>
-                        </div>
-                      ))
+                      activeRoster.map(m => {
+                        const learnerResponseCount = responseCountByLearnerId[m.learner_id] || 0;
+                        return (
+                          <div key={m.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 p-1.5 bg-white border border-slate-100 rounded text-xs">
+                            <span className="font-semibold text-slate-700 truncate">{m.learner.display_name}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded font-bold bg-indigo-50 text-indigo-700 whitespace-nowrap" title="Total responses captured from this roster learner">
+                              {learnerResponseCount} resp
+                            </span>
+                            <span className={`text-[9px] px-1 rounded font-bold whitespace-nowrap ${m.can_answer ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                              {m.can_answer ? 'Online' : 'Locked'}
+                            </span>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -1981,7 +2030,7 @@ export default function SimulatorTab({
                                       </p>
                                     )}
                                     <p className="text-xs text-slate-700 leading-relaxed">
-                                      Teacher audio/text stays visible only here. Learner terminals receive metadata and response buttons only.
+                                      Next teacher prompt is ready below. Learner terminals receive metadata and response buttons only.
                                     </p>
                                   </div>
 
@@ -1997,6 +2046,17 @@ export default function SimulatorTab({
                                   >
                                     <Volume2 className={`${isFocusMode ? 'w-12 h-12 md:w-14 md:h-14' : 'w-10 h-10'} ${isAudioPlaying ? 'animate-bounce' : ''}`} />
                                   </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-left">
+                                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Vietnamese</span>
+                                    <p className="text-xs text-slate-700 leading-relaxed mt-1">{nextRes.text_vi || '—'}</p>
+                                  </div>
+                                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">English</span>
+                                    <p className="text-xs text-slate-700 leading-relaxed mt-1">{nextRes.text_en || nextRes.text_prompt || '—'}</p>
+                                  </div>
                                 </div>
                               </div>
                             ) : (
@@ -2045,6 +2105,22 @@ export default function SimulatorTab({
                               <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-700 px-3 py-1.5 rounded-lg">
                                 <Sparkles className="w-3.5 h-3.5 animate-pulse" />
                                 <span className="text-xs font-bold">Auto next-turn ON</span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => nextRes && playSentenceAudio(nextRes)}
+                                disabled={!nextRes}
+                                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-700 transition-all flex items-center gap-1.5"
+                                title="Play the next speaker prompt. Keyboard: Space."
+                              >
+                                <Volume2 className="w-4 h-4" />
+                                Play Prompt
+                                <span className="text-[9px] text-indigo-500">Space</span>
+                              </button>
+
+                              <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg">
+                                → opens next turn
                               </div>
 
                               <button

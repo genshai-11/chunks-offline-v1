@@ -32,11 +32,14 @@ Expected behavior after the next-turn flow fix:
 
 - Once the first learner response is captured, CCI Performance can show values such as `Green: 1`.
 - The teacher console should not continue presenting that state as waiting for a first response.
-- Between turns, the main canvas should switch to the next sentence preview with a speaker/play control and an **Open Next Turn Speaker Prompt** fallback button.
+- After a first response, the system closes the captured round and auto-opens the next turn in sequence.
+- The next open turn should auto-play audio when **Auto-play on launch** is enabled.
+- Between turns, the main canvas should show the next sentence preview with speaker/play control and Vietnamese/English prompt text for the teacher only.
+- Teachers can press **Space** to replay the current/next prompt audio, or **ArrowRight** to open the next turn when between turns.
 - Focus mode gives the prompt canvas more width than the roster panel.
-- The roster panel shows total received user responses and unique responders.
+- The roster panel shows total received user responses, unique responders, and per-roster learner response counts.
 
-If the console still appears stuck, refresh the teacher console and verify the latest GitHub/Firebase release includes the live room next-turn flow fix.
+If the console still appears stuck, refresh the teacher console and verify the latest GitHub/Firebase release includes the live room next-turn auto-open flow fix.
 
 ## Firebase deploy issue
 
