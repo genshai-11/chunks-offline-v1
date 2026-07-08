@@ -480,5 +480,21 @@ ALTER TABLE learner_responses DROP CONSTRAINT IF EXISTS learner_responses_perfor
 ALTER TABLE learner_responses ADD CONSTRAINT learner_responses_performance_y_check 
     CHECK (performance_y IN (0, 1, 2, 3));
 `
+  },
+  {
+    filename: "008_lesson_section_default_cci.sql",
+    title: "Lesson Section Default CCI Assignment",
+    description: "Adds an optional default CCI Standard Card reference to lesson_sections so live-room rounds can resolve CCI by section/topic part while preserving room_round snapshots.",
+    sql: `-- 008_lesson_section_default_cci.sql
+
+ALTER TABLE public.lesson_sections
+  ADD COLUMN IF NOT EXISTS default_cci_standard_card_id UUID NULL REFERENCES public.cci_standard_cards(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS lesson_sections_default_cci_standard_card_id_idx
+  ON public.lesson_sections(default_cci_standard_card_id);
+
+COMMENT ON COLUMN public.lesson_sections.default_cci_standard_card_id IS
+  'Optional default CCI standard card used by live-room round opening when a sentence resource belongs to this section.';
+`
   }
 ];

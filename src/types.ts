@@ -30,8 +30,69 @@ export interface LessonSection {
   title: string;
   order_index: number;
   status: 'draft' | 'active' | 'archived';
+  default_cci_standard_card_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Sentence Resource: A sentence prompt used in live room rounds.
+export interface TopicPrepSectionSummary {
+  sectionId: string;
+  sectionTitle: string;
+  lessonId: string;
+  orderIndex: number;
+  resourceCount: number;
+  approvedResourceCount: number;
+  draftResourceCount: number;
+  archivedResourceCount: number;
+  missingEnAudioCount: number;
+  missingViAudioCount: number;
+  minCvr: number | null;
+  maxCvr: number | null;
+  defaultCciCardId: string | null;
+  defaultCciLabel: string | null;
+  defaultCciStandardValue: number | null;
+  ready: boolean;
+  blockingReasons: string[];
+  warningReasons: string[];
+}
+
+export interface TopicPrepSummary {
+  lessonId: string;
+  lessonTitle: string;
+  sectionCount: number;
+  resourceCount: number;
+  approvedResourceCount: number;
+  draftResourceCount: number;
+  archivedResourceCount: number;
+  missingEnAudioCount: number;
+  missingViAudioCount: number;
+  ready: boolean;
+  blockingReasons: string[];
+  warningReasons: string[];
+  sections: TopicPrepSectionSummary[];
+}
+
+export interface GeneratedSentenceCandidate {
+  candidateId: string;
+  courseId: string;
+  lessonId: string;
+  sectionId: string | null;
+  engSentence: string;
+  vieSentence: string;
+  resourcesUsed: Array<Record<string, any>>;
+  rTotal: number | null;
+  iValue: number | null;
+  uTotal: number | null;
+  totalOhm: number | null;
+  difficultyLabel: string | null;
+  generatedAt: string | null;
+}
+
+export interface ResolvedCciAssignment {
+  card: CCIStandardCard | null;
+  source: 'manual' | 'section_default' | 'room_default' | 'fallback' | 'missing';
+  warning: string | null;
 }
 
 // Sentence Resource: A sentence prompt used in live room rounds.

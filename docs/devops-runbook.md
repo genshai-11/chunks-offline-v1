@@ -49,6 +49,21 @@ Required IAM roles:
 
 Rotate the key if it is exposed, if an operator leaves, or at regular security intervals.
 
+## 3.1 Supabase Edge Function secrets
+
+Supabase Edge Functions must keep third-party/M2M secrets server-side. For the lesson-generator proxy, configure secrets in Supabase (not in frontend code):
+
+- `CHUNKS_M2M_API_KEY`
+- optional `CHUNKS_M2M_BASE_URL`
+- optional `CHUNKS_M2M_TIMEOUT_MS`
+
+Before deploying or enabling an Edge Function integration:
+
+1. Confirm no literal API keys appear in `src/`, built output, committed docs, or browser network calls.
+2. Deploy the Edge Function only after the implementation is committed.
+3. Keep rollback instructions: redeploy the previous function version or disable the UI entry point while preserving Library CRUD.
+4. Record function deploys in `docs/deployment-log.md` with validation and rollback notes.
+
 ## 4. Local commands
 
 ```bash

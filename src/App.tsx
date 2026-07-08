@@ -521,6 +521,7 @@ export default function App() {
                 lessons={lessons}
                 sections={sections}
                 resources={resources}
+                cciCards={cciCards}
                 onRefreshData={reloadDatabaseState}
               />
             )}

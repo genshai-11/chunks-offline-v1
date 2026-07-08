@@ -3,16 +3,41 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { Course, Lesson, LessonSection, SentenceResource } from '../types';
-import { sandboxDb, supabase } from '../lib/supabaseClient';
+import React, { useMemo, useState } from 'react';
+import { CCIStandardCard, Course, GeneratedSentenceCandidate, Lesson, LessonSection, SentenceResource } from '../types';
+import { supabase } from '../lib/supabaseClient';
 import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
 import { generateResourceAudio } from '../lib/ttsService';
+import { generateLessonCandidate, LessonGeneratorResourceInput } from '../lib/lessonGeneratorClient';
 import { getShortSentenceCode } from '../lib/resourceCode';
-import { 
-  Plus, Check, Play, Edit2, Trash2, Globe, FileText, 
-  Volume2, RefreshCw, AlertCircle,
-  BookOpen, GraduationCap, Layers, Mic, BarChart3, LayoutGrid, List as ListIcon
+import {
+  buildSentenceCode,
+  buildTopicPrepSummary,
+  getCourseDependencyCounts,
+  getLessonDependencyCounts,
+  getSectionDependencyCounts,
+  nextOrderIndex,
+  statusBadgeTone
+} from '../lib/liveData';
+import {
+  AlertCircle,
+  BarChart3,
+  BookOpen,
+  Check,
+  Edit2,
+  FileText,
+  GraduationCap,
+  Layers,
+  LayoutGrid,
+  List as ListIcon,
+  Mic,
+  Play,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  Volume2,
+  Wand2
 } from 'lucide-react';
 
 interface LibraryTabProps {
@@ -21,8 +46,45 @@ interface LibraryTabProps {
   lessons: Lesson[];
   sections: LessonSection[];
   resources: SentenceResource[];
+  cciCards: CCIStandardCard[];
   onRefreshData: () => void;
 }
+
+type Status = 'draft' | 'active' | 'archived';
+type ResourceStatus = 'draft' | 'approved' | 'archived';
+
+type GeneratorFormState = {
+  theme: string;
+  topicLevel: number;
+  sentenceLength: 'Very Short' | 'Short' | 'Medium' | 'Long';
+  resourceText: string;
+  iValue: number;
+};
+
+const emptyGeneratorForm: GeneratorFormState = {
+  theme: '',
+  topicLevel: 1.2,
+  sentenceLength: 'Short',
+  resourceText: '',
+  iValue: 1
+};
+
+const parseGeneratorResources = (value: string): LessonGeneratorResourceInput[] => {
+  return value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const [name = '', color = 'Blue', ohm = '5', enHint] = line.split('|').map(part => part.trim());
+      return {
+        name,
+        color: color || 'Blue',
+        ohm: Number(ohm) || 5,
+        ...(enHint ? { enHint } : {})
+      };
+    })
+    .filter(item => item.name && item.ohm > 0);
+};
 
 export default function LibraryTab({
   useSandbox,
@@ -30,1214 +92,626 @@ export default function LibraryTab({
   lessons,
   sections,
   resources,
+  cciCards,
   onRefreshData
 }: LibraryTabProps) {
-  // Library now owns sentence resources only. CCI/CVR standards and categories live in Settings.
-  
-  // Selection filters for resources
   const [selectedCourseId, setSelectedCourseId] = useState<string>(courses[0]?.id || '');
+  const activeCourse = courses.find(course => course.id === selectedCourseId) || courses[0] || null;
+  const safeSelectedCourseId = activeCourse?.id || '';
+
+  const filteredLessons = useMemo(
+    () => lessons.filter(lesson => lesson.course_id === safeSelectedCourseId).sort((a, b) => a.order_index - b.order_index || a.title.localeCompare(b.title)),
+    [lessons, safeSelectedCourseId]
+  );
   const [selectedLessonId, setSelectedLessonId] = useState<string>('');
+  const activeLesson = filteredLessons.find(lesson => lesson.id === selectedLessonId) || filteredLessons[0] || null;
+  const safeSelectedLessonId = activeLesson?.id || '';
+
+  const filteredSections = useMemo(
+    () => sections.filter(section => section.lesson_id === safeSelectedLessonId).sort((a, b) => a.order_index - b.order_index || a.title.localeCompare(b.title)),
+    [sections, safeSelectedLessonId]
+  );
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
+  const activeSection = filteredSections.find(section => section.id === selectedSectionId) || null;
+
   const [audioFilter, setAudioFilter] = useState<'all' | 'missing_en' | 'missing_vi' | 'missing_any' | 'has_both'>('all');
-
-  // Bulk resource actions
-  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
-  const [bulkCvrValue, setBulkCvrValue] = useState<number>(1);
-  const [bulkCvrBusy, setBulkCvrBusy] = useState(false);
-  const [bulkTtsBusy, setBulkTtsBusy] = useState(false);
-  const [bulkActionStatus, setBulkActionStatus] = useState<string>('');
-
-  // View style & Audio states
   const [viewMode, setViewMode] = useState<'card' | 'list'>('list');
-  const [currentlyPlaying, setCurrentlyPlaying] = useState<string | null>(null);
-  const [activeAudio, setActiveAudio] = useState<HTMLAudioElement | null>(null);
-
-  // Pagination states
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(8);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  // Reset pagination on filter or view mode change or itemsPerPage change
-  useEffect(() => {
-    setCurrentPage(1);
-    setSelectedResourceIds([]);
-    setBulkActionStatus('');
-  }, [selectedCourseId, selectedLessonId, selectedSectionId, audioFilter, viewMode, itemsPerPage]);
+  const [courseFormOpen, setCourseFormOpen] = useState(false);
+  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
+  const [courseTitle, setCourseTitle] = useState('');
+  const [courseStatus, setCourseStatus] = useState<Status>('draft');
 
-  // Automatically sync/validate selections when data lists update (e.g., useSandbox / database source changes)
-  useEffect(() => {
-    if (courses.length > 0) {
-      const courseExists = courses.some(c => c.id === selectedCourseId);
-      if (!courseExists || !selectedCourseId) {
-        setSelectedCourseId(courses[0].id);
-        setSelectedLessonId('');
-        setSelectedSectionId('');
-      }
-    } else {
-      setSelectedCourseId('');
-      setSelectedLessonId('');
-      setSelectedSectionId('');
-    }
-  }, [courses, selectedCourseId]);
+  const [lessonFormOpen, setLessonFormOpen] = useState(false);
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
+  const [lessonTitle, setLessonTitle] = useState('');
+  const [lessonOrder, setLessonOrder] = useState(1);
+  const [lessonStatus, setLessonStatus] = useState<Status>('draft');
 
-  useEffect(() => {
-    const validLessons = lessons.filter(l => l.course_id === selectedCourseId);
-    if (validLessons.length > 0) {
-      const lessonExists = validLessons.some(l => l.id === selectedLessonId);
-      if (!lessonExists && selectedLessonId) {
-        setSelectedLessonId('');
-        setSelectedSectionId('');
-      }
-    } else {
-      setSelectedLessonId('');
-      setSelectedSectionId('');
-    }
-  }, [lessons, selectedCourseId, selectedLessonId]);
+  const [sectionFormOpen, setSectionFormOpen] = useState(false);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [sectionTitle, setSectionTitle] = useState('');
+  const [sectionOrder, setSectionOrder] = useState(1);
+  const [sectionStatus, setSectionStatus] = useState<Status>('draft');
+  const [sectionCciCardId, setSectionCciCardId] = useState('');
 
-  useEffect(() => {
-    const activeLesson = selectedLessonId || (lessons.filter(l => l.course_id === selectedCourseId)[0]?.id || '');
-    const validSections = sections.filter(s => s.lesson_id === activeLesson);
-    if (validSections.length > 0) {
-      const sectionExists = validSections.some(s => s.id === selectedSectionId);
-      if (!sectionExists && selectedSectionId) {
-        setSelectedSectionId('');
-      }
-    } else {
-      setSelectedSectionId('');
-    }
-  }, [sections, selectedLessonId, selectedCourseId, lessons, selectedSectionId]);
-
-  const clearBrokenAudioReference = async (url: string, key: string) => {
-    if (useSandbox) return;
-
-    const [resourceId, lang] = key.split('_');
-    const audioField = lang === 'vi' ? 'audio_vi_url' : lang === 'en' ? 'audio_en_url' : null;
-    if (!resourceId || !audioField) return;
-
-    const resource = resources.find(r => r.id === resourceId);
-    if (!resource) return;
-
-    const currentValue = audioField === 'audio_vi_url' ? resource.audio_vi_url : resource.audio_en_url;
-    if (currentValue !== url) return;
-
-    await supabase
-      .from('sentence_resources')
-      .update({
-        [audioField]: null,
-        audio_url: resource.audio_url === url ? null : resource.audio_url,
-        audio_variants: resource.audio_variants || {},
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', resourceId);
-
-    onRefreshData();
-  };
-
-  const playAudio = async (url: string, key: string, updatedAt?: string) => {
-    if (activeAudio) {
-      activeAudio.pause();
-      if (currentlyPlaying === key) {
-        setCurrentlyPlaying(null);
-        setActiveAudio(null);
-        return;
-      }
-    }
-
-    const playableUrl = resolveResourceAudioUrl(url, updatedAt);
-    if (!playableUrl) return;
-
-    const exists = await checkResourceAudioExists(url);
-    if (exists === false) {
-      await clearBrokenAudioReference(url, key);
-      alert('Audio file is missing in Supabase Storage. Please generate this audio again.');
-      setCurrentlyPlaying(null);
-      setActiveAudio(null);
-      return;
-    }
-
-    const audio = new Audio(playableUrl);
-    audio.preload = 'auto';
-    audio.onended = () => {
-      setCurrentlyPlaying(null);
-      setActiveAudio(null);
-    };
-    audio.onerror = async () => {
-      console.error('Audio source failed to load:', { originalUrl: url, playableUrl });
-      await clearBrokenAudioReference(url, key);
-      setCurrentlyPlaying(null);
-      setActiveAudio(null);
-    };
-    audio.play().catch(async err => {
-      console.error('Audio playback error:', err, { originalUrl: url, playableUrl });
-      await clearBrokenAudioReference(url, key);
-      setCurrentlyPlaying(null);
-      setActiveAudio(null);
-    });
-    setActiveAudio(audio);
-    setCurrentlyPlaying(key);
-  };
-
-  // Editing state for Sentence Resource
-  const [showAddResource, setShowAddResource] = useState(false);
+  const [resourceFormOpen, setResourceFormOpen] = useState(false);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
-  
-  // Resource Form Fields
   const [resCode, setResCode] = useState('');
   const [resPrompt, setResPrompt] = useState('');
   const [resEn, setResEn] = useState('');
   const [resVi, setResVi] = useState('');
-  const [resCvr, setResCvr] = useState(1.0);
-  const [resStatus, setResStatus] = useState<'draft' | 'approved' | 'archived'>('draft');
+  const [resCvr, setResCvr] = useState(1);
+  const [resStatus, setResStatus] = useState<ResourceStatus>('draft');
   const [resSectionId, setResSectionId] = useState('');
 
-  // Active filter helper
-  const filteredLessons = lessons.filter(l => l.course_id === selectedCourseId);
-  const activeLessonId = selectedLessonId || filteredLessons[0]?.id || '';
-  const filteredSections = sections.filter(s => s.lesson_id === activeLessonId);
-  
-  const filteredResources = resources.filter(r => {
-    const matchCourse = r.course_id === selectedCourseId;
-    const matchLesson = r.lesson_id === activeLessonId;
-    const matchSection = selectedSectionId ? r.section_id === selectedSectionId : true;
-    
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [generatorForm, setGeneratorForm] = useState<GeneratorFormState>(emptyGeneratorForm);
+  const [generatorBusy, setGeneratorBusy] = useState(false);
+  const [candidate, setCandidate] = useState<GeneratedSentenceCandidate | null>(null);
+
+  const lessonResources = resources.filter(resource => resource.lesson_id === safeSelectedLessonId);
+  const filteredResources = resources.filter(resource => {
+    const matchCourse = !safeSelectedCourseId || resource.course_id === safeSelectedCourseId;
+    const matchLesson = !safeSelectedLessonId || resource.lesson_id === safeSelectedLessonId;
+    const matchSection = selectedSectionId ? resource.section_id === selectedSectionId : true;
     let matchAudio = true;
-    if (audioFilter === 'missing_en') {
-      matchAudio = !r.audio_en_url;
-    } else if (audioFilter === 'missing_vi') {
-      matchAudio = !r.audio_vi_url;
-    } else if (audioFilter === 'missing_any') {
-      matchAudio = !r.audio_en_url || !r.audio_vi_url;
-    } else if (audioFilter === 'has_both') {
-      matchAudio = !!r.audio_en_url && !!r.audio_vi_url;
-    }
-    
+    if (audioFilter === 'missing_en') matchAudio = !resource.audio_en_url;
+    if (audioFilter === 'missing_vi') matchAudio = !resource.audio_vi_url;
+    if (audioFilter === 'missing_any') matchAudio = !resource.audio_en_url || !resource.audio_vi_url;
+    if (audioFilter === 'has_both') matchAudio = Boolean(resource.audio_en_url && resource.audio_vi_url);
     return matchCourse && matchLesson && matchSection && matchAudio;
   });
 
   const totalPages = Math.max(1, Math.ceil(filteredResources.length / itemsPerPage));
-  const startIndex = (currentPage - 1) * itemsPerPage;
+  const page = Math.min(currentPage, totalPages);
+  const startIndex = (page - 1) * itemsPerPage;
   const paginatedResources = filteredResources.slice(startIndex, startIndex + itemsPerPage);
-  const selectedResources = resources.filter(r => selectedResourceIds.includes(r.id));
-  const pageResourceIds = paginatedResources.map(r => r.id);
-  const allPageSelected = pageResourceIds.length > 0 && pageResourceIds.every(id => selectedResourceIds.includes(id));
+  const topicPrep = buildTopicPrepSummary({ lesson: activeLesson, sections, resources, cciCards });
+  const activeCciCards = cciCards.filter(card => card.active !== false);
 
-  const toggleResourceSelection = (resourceId: string) => {
-    setSelectedResourceIds(prev => prev.includes(resourceId) ? prev.filter(id => id !== resourceId) : [...prev, resourceId]);
-  };
-
-  const toggleCurrentPageSelection = () => {
-    setSelectedResourceIds(prev => {
-      if (allPageSelected) return prev.filter(id => !pageResourceIds.includes(id));
-      return [...new Set([...prev, ...pageResourceIds])];
-    });
-  };
-
-  const selectAllFilteredResources = () => {
-    setSelectedResourceIds(filteredResources.map(r => r.id));
-  };
-
-  const handleBulkUpdateCvr = async () => {
-    if (selectedResourceIds.length === 0) return alert('Select at least one resource first.');
-    const nextCvr = Number(bulkCvrValue);
-    if (!Number.isFinite(nextCvr) || nextCvr <= 0) return alert('CVR must be a positive number.');
-    if (!window.confirm(`Update CVR Ω to ${nextCvr} for ${selectedResourceIds.length} selected resources?`)) return;
-
-    setBulkCvrBusy(true);
-    setBulkActionStatus('Updating CVR values...');
+  const runMutation = async (label: string, operation: () => Promise<void>) => {
+    setBusy(true);
+    setStatusMessage(`${label}...`);
     try {
-      if (useSandbox) {
-        sandboxDb.sentenceResources = sandboxDb.sentenceResources.map(r =>
-          selectedResourceIds.includes(r.id)
-            ? { ...r, cvr_value: nextCvr, default_cvr_value: nextCvr, updated_at: new Date().toISOString() }
-            : r
-        );
-      } else {
-        const { error } = await supabase
-          .from('sentence_resources')
-          .update({ cvr_value: nextCvr, default_cvr_value: nextCvr, updated_at: new Date().toISOString() })
-          .in('id', selectedResourceIds);
-        if (error) throw error;
-      }
-      setBulkActionStatus(`Updated CVR Ω=${nextCvr} for ${selectedResourceIds.length} resources.`);
-      onRefreshData();
+      await operation();
+      setStatusMessage(`${label} complete.`);
+      await Promise.resolve(onRefreshData());
     } catch (err: any) {
-      setBulkActionStatus('CVR update failed: ' + (err.message || String(err)));
-      alert('Failed to update CVR: ' + (err.message || String(err)));
+      const message = err.message || String(err);
+      setStatusMessage(`${label} failed: ${message}`);
+      alert(`${label} failed: ${message}`);
     } finally {
-      setBulkCvrBusy(false);
+      setBusy(false);
     }
   };
 
-  const handleBulkGenerateMissingAudio = async (mode: 'en' | 'vi' | 'both') => {
-    if (selectedResourceIds.length === 0) return alert('Select at least one resource first.');
-    const targets: Array<{ resource: SentenceResource; lang: 'en' | 'vi' }> = [];
-    selectedResources.forEach(resource => {
-      if ((mode === 'en' || mode === 'both') && !resource.audio_en_url) targets.push({ resource, lang: 'en' });
-      if ((mode === 'vi' || mode === 'both') && !resource.audio_vi_url) targets.push({ resource, lang: 'vi' });
-    });
-
-    if (targets.length === 0) {
-      setBulkActionStatus('Selected resources already have the requested audio tracks.');
-      return;
-    }
-    if (!window.confirm(`Generate ${targets.length} missing TTS tracks via Supabase Edge Function generate-resource-audio?`)) return;
-
-    setBulkTtsBusy(true);
-    let ok = 0;
-    const failures: string[] = [];
-    try {
-      for (const target of targets) {
-        setBulkActionStatus(`Generating ${target.lang.toUpperCase()} audio ${ok + failures.length + 1}/${targets.length}: ${getShortSentenceCode(target.resource.sentence_code, target.resource.order_index)}`);
-        try {
-          if (useSandbox) {
-            sandboxDb.queueAudioJob(target.resource.id, target.lang, 'Admin Operator');
-          } else {
-            await generateResourceAudio(target.resource, target.lang);
-          }
-          ok += 1;
-        } catch (err: any) {
-          failures.push(`${getShortSentenceCode(target.resource.sentence_code, target.resource.order_index)} ${target.lang.toUpperCase()}: ${err.message || String(err)}`);
-        }
-      }
-      setBulkActionStatus(`TTS complete: ${ok}/${targets.length} generated${failures.length ? `, ${failures.length} failed` : ''}.`);
-      if (failures.length) console.warn('Bulk TTS failures:', failures);
-      onRefreshData();
-      if (failures.length) alert('Some TTS generations failed:\n' + failures.slice(0, 6).join('\n'));
-    } finally {
-      setBulkTtsBusy(false);
-    }
+  const resetCourseForm = () => {
+    setCourseFormOpen(false);
+    setEditingCourseId(null);
+    setCourseTitle('');
+    setCourseStatus('draft');
   };
 
-  // Handle resource submission
-  const handleSaveResource = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resCode.trim()) return alert("Sentence code is required");
+  const resetLessonForm = () => {
+    setLessonFormOpen(false);
+    setEditingLessonId(null);
+    setLessonTitle('');
+    setLessonOrder(nextOrderIndex(filteredLessons));
+    setLessonStatus('draft');
+  };
 
-    if (useSandbox) {
-      const items = sandboxDb.sentenceResources;
-      if (editingResourceId) {
-        // Edit existing
-        const idx = items.findIndex(r => r.id === editingResourceId);
-        if (idx !== -1) {
-          items[idx] = {
-            ...items[idx],
-            sentence_code: resCode.trim(),
-            text_prompt: resPrompt.trim(),
-            text_en: resEn.trim(),
-            text_vi: resVi.trim(),
-            cvr_value: Number(resCvr),
-            approval_status: resStatus,
-            section_id: resSectionId || null,
-            updated_at: new Date().toISOString()
-          };
-        }
-      } else {
-        // Add new
-        const newRes: SentenceResource = {
-          id: "r_" + crypto.randomUUID().substring(0, 8),
-          course_id: selectedCourseId,
-          lesson_id: activeLessonId,
-          section_id: resSectionId || null,
-          sentence_code: resCode.trim().toUpperCase(),
-          text_prompt: resPrompt.trim(),
-          text_en: resEn.trim(),
-          text_vi: resVi.trim(),
-          audio_url: null,
-          audio_en_url: null,
-          audio_vi_url: null,
-          audio_variants: {},
-          default_cvr_unit_id: null,
-          default_cvr_value: Number(resCvr),
-          cvr_value: Number(resCvr),
-          order_index: items.length + 1,
-          approval_status: resStatus,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-        items.push(newRes);
-      }
-      sandboxDb.sentenceResources = items;
-      onRefreshData();
-      resetResourceForm();
-    } else {
-      // Direct Supabase Implementation
-      const resourceData = {
-        course_id: selectedCourseId,
-        lesson_id: activeLessonId,
-        section_id: resSectionId || null,
-        sentence_code: resCode.trim().toUpperCase(),
-        text_prompt: resPrompt.trim(),
-        text_en: resEn.trim(),
-        text_vi: resVi.trim(),
-        cvr_value: Number(resCvr),
-        approval_status: resStatus,
-        updated_at: new Date().toISOString()
-      };
-
-      const executeSave = async () => {
-        try {
-          if (editingResourceId) {
-            const { error } = await supabase
-              .from('sentence_resources')
-              .update(resourceData)
-              .eq('id', editingResourceId);
-            if (error) throw error;
-          } else {
-            const { error } = await supabase
-              .from('sentence_resources')
-              .insert([{
-                ...resourceData,
-                id: crypto.randomUUID(),
-                audio_variants: {},
-                default_cvr_value: Number(resCvr),
-                order_index: resources.length + 1,
-                created_at: new Date().toISOString()
-              }]);
-            if (error) throw error;
-          }
-          onRefreshData();
-          resetResourceForm();
-        } catch (err: any) {
-          alert("Failed to save to Supabase: " + err.message);
-        }
-      };
-      executeSave();
-    }
+  const resetSectionForm = () => {
+    setSectionFormOpen(false);
+    setEditingSectionId(null);
+    setSectionTitle('');
+    setSectionOrder(nextOrderIndex(filteredSections));
+    setSectionStatus('draft');
+    setSectionCciCardId('');
   };
 
   const resetResourceForm = () => {
-    setShowAddResource(false);
+    setResourceFormOpen(false);
     setEditingResourceId(null);
     setResCode('');
     setResPrompt('');
     setResEn('');
     setResVi('');
-    setResCvr(1.0);
+    setResCvr(1);
     setResStatus('draft');
-    setResSectionId('');
+    setResSectionId(selectedSectionId || '');
   };
 
-  const handleEditResourceClick = (r: SentenceResource) => {
-    setEditingResourceId(r.id);
-    setResCode(r.sentence_code);
-    setResPrompt(r.text_prompt || '');
-    setResEn(r.text_en || '');
-    setResVi(r.text_vi || '');
-    setResCvr(r.cvr_value);
-    setResStatus(r.approval_status);
-    setResSectionId(r.section_id || '');
-    setShowAddResource(true);
+  const startEditCourse = (course: Course) => {
+    setEditingCourseId(course.id);
+    setCourseTitle(course.title);
+    setCourseStatus(course.status);
+    setCourseFormOpen(true);
   };
 
-  const handleDeleteResource = (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this sentence resource?")) return;
-    if (useSandbox) {
-      sandboxDb.sentenceResources = sandboxDb.sentenceResources.filter(r => r.id !== id);
-      onRefreshData();
-    } else {
-      const executeDelete = async () => {
-        try {
-          const { error } = await supabase
-            .from('sentence_resources')
-            .delete()
-            .eq('id', id);
-          if (error) throw error;
-          onRefreshData();
-        } catch (err: any) {
-          alert("Failed to delete from Supabase: " + err.message);
-        }
-      };
-      executeDelete();
-    }
+  const startEditLesson = (lesson: Lesson) => {
+    setEditingLessonId(lesson.id);
+    setLessonTitle(lesson.title);
+    setLessonOrder(lesson.order_index);
+    setLessonStatus(lesson.status);
+    setLessonFormOpen(true);
   };
 
-  // Queue missing audio job
-  const handleQueueAudio = (resourceId: string, lang: 'en' | 'vi') => {
-    if (useSandbox) {
-      try {
-        sandboxDb.queueAudioJob(resourceId, lang, "Admin Operator");
-        alert(`Queued Text-To-Speech audio job for language [${lang.toUpperCase()}]! Navigate to the 'Audio Generator' tab to run or process the job queue.`);
-        onRefreshData();
-      } catch (err: any) {
-        alert(err.message);
+  const startEditSection = (section: LessonSection) => {
+    setEditingSectionId(section.id);
+    setSectionTitle(section.title);
+    setSectionOrder(section.order_index);
+    setSectionStatus(section.status);
+    setSectionCciCardId(section.default_cci_standard_card_id || '');
+    setSectionFormOpen(true);
+  };
+
+  const startCreateResource = () => {
+    setEditingResourceId(null);
+    setResCode(buildSentenceCode(activeCourse, activeLesson, lessonResources));
+    setResPrompt('');
+    setResEn('');
+    setResVi('');
+    setResCvr(1);
+    setResStatus('draft');
+    setResSectionId(selectedSectionId || '');
+    setResourceFormOpen(true);
+  };
+
+  const startEditResource = (resource: SentenceResource) => {
+    setEditingResourceId(resource.id);
+    setResCode(resource.sentence_code);
+    setResPrompt(resource.text_prompt || '');
+    setResEn(resource.text_en || '');
+    setResVi(resource.text_vi || '');
+    setResCvr(Number(resource.cvr_value || resource.default_cvr_value || 1));
+    setResStatus(resource.approval_status);
+    setResSectionId(resource.section_id || '');
+    setResourceFormOpen(true);
+  };
+
+  const saveCourse = (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = courseTitle.trim();
+    if (!title) return alert('Course title is required.');
+    void runMutation(editingCourseId ? 'Updating course' : 'Creating course', async () => {
+      if (editingCourseId) {
+        const { error } = await supabase.from('courses').update({ title, status: courseStatus, updated_at: new Date().toISOString() }).eq('id', editingCourseId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('courses').insert([{ id: crypto.randomUUID(), title, status: courseStatus, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]);
+        if (error) throw error;
       }
-    } else {
-      const executeGenerateAudio = async () => {
-        try {
-          const resource = resources.find(r => r.id === resourceId);
-          if (!resource) throw new Error("Sentence resource not found");
-          const result = await generateResourceAudio(resource, lang);
-          alert(`Generated ${lang.toUpperCase()} audio via Supabase Edge Function generate-resource-audio.\n${result.publicUrl || result.storagePath}`);
-          onRefreshData();
-        } catch (err: any) {
-          alert("Failed to generate live audio: " + (err.message || String(err)));
-        }
-      };
-      executeGenerateAudio();
-    }
+      resetCourseForm();
+    });
   };
 
-  return (
-    <div className="space-y-6" id="library-tab">
-      
-      {/* Library owns curriculum resources. Standards moved to Settings → CCI & CVR Matrices. */}
-      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-        <div>
-          <h2 className="text-sm font-bold text-slate-800">Sentence Library & Prompts</h2>
-          <p className="text-xs text-slate-500 mt-1">CCI/CVR standards, CVR multipliers, and CCI categories are managed from Settings.</p>
+  const archiveCourse = (course: Course) => {
+    void runMutation(`Archiving course ${course.title}`, async () => {
+      const { error } = await supabase.from('courses').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', course.id);
+      if (error) throw error;
+    });
+  };
+
+  const deleteCourse = (course: Course) => {
+    const counts = getCourseDependencyCounts(course.id, lessons, resources);
+    if (counts.lessons > 0 || counts.resources > 0) {
+      alert(`Course has ${counts.lessons} lesson(s) and ${counts.resources} resource(s). Archive it instead of hard deleting.`);
+      return;
+    }
+    if (!window.confirm(`Hard delete empty course "${course.title}"? This cannot be undone.`)) return;
+    void runMutation(`Deleting course ${course.title}`, async () => {
+      const { error } = await supabase.from('courses').delete().eq('id', course.id);
+      if (error) throw error;
+    });
+  };
+
+  const saveLesson = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!safeSelectedCourseId) return alert('Select a course first.');
+    const title = lessonTitle.trim();
+    if (!title) return alert('Lesson/topic title is required.');
+    void runMutation(editingLessonId ? 'Updating lesson/topic' : 'Creating lesson/topic', async () => {
+      const payload = { course_id: safeSelectedCourseId, title, order_index: Number(lessonOrder) || 0, status: lessonStatus, updated_at: new Date().toISOString() };
+      if (editingLessonId) {
+        const { error } = await supabase.from('lessons').update(payload).eq('id', editingLessonId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('lessons').insert([{ id: crypto.randomUUID(), ...payload, created_at: new Date().toISOString() }]);
+        if (error) throw error;
+      }
+      resetLessonForm();
+    });
+  };
+
+  const archiveLesson = (lesson: Lesson) => {
+    void runMutation(`Archiving lesson ${lesson.title}`, async () => {
+      const { error } = await supabase.from('lessons').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', lesson.id);
+      if (error) throw error;
+    });
+  };
+
+  const deleteLesson = (lesson: Lesson) => {
+    const counts = getLessonDependencyCounts(lesson.id, sections, resources);
+    if (counts.sections > 0 || counts.resources > 0) {
+      alert(`Lesson has ${counts.sections} section(s) and ${counts.resources} resource(s). Archive it instead of hard deleting.`);
+      return;
+    }
+    if (!window.confirm(`Hard delete empty lesson "${lesson.title}"?`)) return;
+    void runMutation(`Deleting lesson ${lesson.title}`, async () => {
+      const { error } = await supabase.from('lessons').delete().eq('id', lesson.id);
+      if (error) throw error;
+    });
+  };
+
+  const saveSection = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!safeSelectedLessonId) return alert('Select a lesson/topic first.');
+    const title = sectionTitle.trim();
+    if (!title) return alert('Section/part title is required.');
+    void runMutation(editingSectionId ? 'Updating section/part' : 'Creating section/part', async () => {
+      const payload = {
+        lesson_id: safeSelectedLessonId,
+        title,
+        order_index: Number(sectionOrder) || 0,
+        status: sectionStatus,
+        default_cci_standard_card_id: sectionCciCardId || null,
+        updated_at: new Date().toISOString()
+      };
+      if (editingSectionId) {
+        const { error } = await supabase.from('lesson_sections').update(payload).eq('id', editingSectionId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('lesson_sections').insert([{ id: crypto.randomUUID(), ...payload, created_at: new Date().toISOString() }]);
+        if (error) throw error;
+      }
+      resetSectionForm();
+    });
+  };
+
+  const archiveSection = (section: LessonSection) => {
+    void runMutation(`Archiving section ${section.title}`, async () => {
+      const { error } = await supabase.from('lesson_sections').update({ status: 'archived', updated_at: new Date().toISOString() }).eq('id', section.id);
+      if (error) throw error;
+    });
+  };
+
+  const deleteSection = (section: LessonSection) => {
+    const counts = getSectionDependencyCounts(section.id, resources);
+    if (counts.resources > 0) {
+      alert(`Section has ${counts.resources} resource(s). Archive it instead of hard deleting.`);
+      return;
+    }
+    if (!window.confirm(`Hard delete empty section "${section.title}"?`)) return;
+    void runMutation(`Deleting section ${section.title}`, async () => {
+      const { error } = await supabase.from('lesson_sections').delete().eq('id', section.id);
+      if (error) throw error;
+    });
+  };
+
+  const saveResource = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!safeSelectedCourseId || !safeSelectedLessonId) return alert('Select a course and lesson first.');
+    if (!resCode.trim()) return alert('Sentence code is required.');
+    void runMutation(editingResourceId ? 'Updating sentence resource' : 'Creating sentence resource', async () => {
+      const payload = {
+        course_id: safeSelectedCourseId,
+        lesson_id: safeSelectedLessonId,
+        section_id: resSectionId || null,
+        sentence_code: resCode.trim().toUpperCase(),
+        text_prompt: resPrompt.trim(),
+        text_en: resEn.trim(),
+        text_vi: resVi.trim(),
+        cvr_value: Number(resCvr) || 1,
+        default_cvr_value: Number(resCvr) || 1,
+        approval_status: resStatus,
+        updated_at: new Date().toISOString()
+      };
+      if (editingResourceId) {
+        const { error } = await supabase.from('sentence_resources').update(payload).eq('id', editingResourceId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('sentence_resources').insert([{
+          id: crypto.randomUUID(),
+          ...payload,
+          audio_variants: {},
+          order_index: nextOrderIndex(lessonResources),
+          created_at: new Date().toISOString()
+        }]);
+        if (error) throw error;
+      }
+      resetResourceForm();
+    });
+  };
+
+  const archiveResource = (resource: SentenceResource) => {
+    void runMutation(`Archiving resource ${resource.sentence_code}`, async () => {
+      const { error } = await supabase.from('sentence_resources').update({ approval_status: 'archived', updated_at: new Date().toISOString() }).eq('id', resource.id);
+      if (error) throw error;
+    });
+  };
+
+  const generateAudio = (resource: SentenceResource, lang: 'en' | 'vi') => {
+    void runMutation(`Generating ${lang.toUpperCase()} audio`, async () => {
+      await generateResourceAudio(resource, lang);
+    });
+  };
+
+  const playAudio = async (resource: SentenceResource, lang: 'en' | 'vi') => {
+    const url = lang === 'en' ? resource.audio_en_url : resource.audio_vi_url;
+    if (!url) return;
+    const exists = await checkResourceAudioExists(url);
+    if (exists === false) return alert('Audio file is missing in storage. Please regenerate it.');
+    const playable = resolveResourceAudioUrl(url, resource.updated_at);
+    if (playable) new Audio(playable).play().catch(err => alert(err.message));
+  };
+
+  const requestCandidate = () => {
+    if (!safeSelectedCourseId || !safeSelectedLessonId) return alert('Select course and lesson first.');
+    const generationResources = parseGeneratorResources(generatorForm.resourceText);
+    if (generationResources.length === 0) return alert('Add at least one generation resource line: name | color | ohm | optional hint');
+    setGeneratorBusy(true);
+    setCandidate(null);
+    generateLessonCandidate({
+      target: { courseId: safeSelectedCourseId, lessonId: safeSelectedLessonId, sectionId: selectedSectionId || null },
+      generation: {
+        theme: generatorForm.theme || activeLesson?.title || activeCourse?.title || undefined,
+        topicLevel: generatorForm.topicLevel,
+        sentenceLength: generatorForm.sentenceLength,
+        resources: generationResources,
+        iValue: generatorForm.iValue
+      }
+    }).then(result => {
+      if (result.status === 'success') {
+        setCandidate(result.candidate);
+        setStatusMessage('Generated candidate ready for review.');
+      } else if (result.status === 'processing') {
+        setStatusMessage(result.message);
+      } else {
+        setStatusMessage(result.errorMessage);
+        alert(result.errorMessage);
+      }
+    }).finally(() => setGeneratorBusy(false));
+  };
+
+  const saveCandidate = (status: ResourceStatus) => {
+    if (!candidate) return;
+    setResCode(buildSentenceCode(activeCourse, activeLesson, lessonResources));
+    setResPrompt(candidate.resourcesUsed?.map(r => r.name || r.text).filter(Boolean).join(' + ') || generatorForm.theme || activeLesson?.title || 'Generated lesson sentence');
+    setResEn(candidate.engSentence);
+    setResVi(candidate.vieSentence);
+    setResCvr(candidate.totalOhm || candidate.uTotal || 1);
+    setResStatus(status);
+    setResSectionId(candidate.sectionId || selectedSectionId || '');
+    setEditingResourceId(null);
+    setResourceFormOpen(true);
+    setStatusMessage('Candidate copied into the sentence editor. Review and click Save Sentence.');
+  };
+
+  const sourceBadge = (status: string) => `inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wide ${statusBadgeTone(status)}`;
+
+  const renderHierarchyManager = () => (
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><BookOpen className="w-4 h-4 text-red-600" /> Courses</h3>
+          <button type="button" onClick={() => { resetCourseForm(); setCourseFormOpen(true); }} className="text-[10px] font-bold text-red-600 flex items-center gap-1"><Plus className="w-3 h-3" /> Add</button>
         </div>
-        <a href="/settings" className="text-[10px] font-bold text-red-600 hover:text-red-700 uppercase tracking-wider">
-          Open Settings Standards
-        </a>
+        {courseFormOpen && (
+          <form onSubmit={saveCourse} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <input value={courseTitle} onChange={e => setCourseTitle(e.target.value)} placeholder="Course title" className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <select value={courseStatus} onChange={e => setCourseStatus(e.target.value as Status)} className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg">
+              <option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option>
+            </select>
+            <div className="flex gap-2"><button className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold">Save</button><button type="button" onClick={resetCourseForm} className="px-3 py-1.5 bg-white border rounded-lg text-xs font-bold">Cancel</button></div>
+          </form>
+        )}
+        <div className="space-y-2 max-h-72 overflow-auto">
+          {courses.map(course => (
+            <div key={course.id} className={`p-3 rounded-xl border ${course.id === safeSelectedCourseId ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-slate-50/60'}`}>
+              <button type="button" onClick={() => { setSelectedCourseId(course.id); setSelectedLessonId(''); setSelectedSectionId(''); }} className="text-left w-full">
+                <div className="font-bold text-xs text-slate-800">{course.title}</div>
+                <span className={sourceBadge(course.status)}>{course.status}</span>
+              </button>
+              <div className="flex gap-1 mt-2">
+                <button type="button" onClick={() => startEditCourse(course)} className="p-1 text-slate-500 hover:text-slate-900"><Edit2 className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => archiveCourse(course)} className="p-1 text-amber-600 hover:text-amber-800"><RefreshCw className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => deleteCourse(course)} className="p-1 text-red-500 hover:text-red-700"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
-
-
-      {(
-        <div className="space-y-6">
-          
-          {/* Horizontal Filter Bar */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs animate-in fade-in duration-200" id="library-filters-container">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              
-              {/* Course Selector */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider flex items-center gap-1.5">
-                  <BookOpen className="w-3.5 h-3.5 text-red-500" />
-                  Course
-                </label>
-                <select
-                  value={selectedCourseId}
-                  onChange={(e) => {
-                    setSelectedCourseId(e.target.value);
-                    setSelectedLessonId('');
-                    setSelectedSectionId('');
-                  }}
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-red-500 font-medium text-slate-700"
-                >
-                  {courses.map(c => (
-                    <option key={c.id} value={c.id}>{c.title}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Lesson Selector */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider flex items-center gap-1.5">
-                  <GraduationCap className="w-3.5 h-3.5 text-red-500" />
-                  Lesson
-                </label>
-                <select
-                  value={activeLessonId}
-                  onChange={(e) => {
-                    setSelectedLessonId(e.target.value);
-                    setSelectedSectionId('');
-                  }}
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-red-500 font-medium text-slate-700"
-                >
-                  {filteredLessons.map(l => (
-                    <option key={l.id} value={l.id}>{l.title}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Section Selector */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-red-500" />
-                  Section Topic
-                </label>
-                <select
-                  value={selectedSectionId}
-                  onChange={(e) => setSelectedSectionId(e.target.value)}
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-red-500 font-medium text-slate-700"
-                >
-                  <option value="">All Sections</option>
-                  {filteredSections.map(s => (
-                    <option key={s.id} value={s.id}>{s.title}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Audio Status Filter */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider flex items-center gap-1.5">
-                  <Mic className="w-3.5 h-3.5 text-red-500" />
-                  Audio Recordings
-                </label>
-                <select
-                  value={audioFilter}
-                  onChange={(e: any) => setAudioFilter(e.target.value)}
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-red-500 font-medium text-slate-700"
-                >
-                  <option value="all">All Audio States</option>
-                  <option value="missing_any">⚠️ Missing Any Audio (EN/VI)</option>
-                  <option value="missing_en">🇬🇧 Missing English Audio</option>
-                  <option value="missing_vi">🇻🇳 Missing Vietnamese Audio</option>
-                  <option value="has_both">✅ Has Both Audio Tracks</option>
-                </select>
-              </div>
-
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><GraduationCap className="w-4 h-4 text-red-600" /> Lessons / Topics</h3>
+          <button type="button" disabled={!safeSelectedCourseId} onClick={() => { resetLessonForm(); setLessonFormOpen(true); }} className="text-[10px] font-bold text-red-600 flex items-center gap-1 disabled:opacity-40"><Plus className="w-3 h-3" /> Add</button>
+        </div>
+        {lessonFormOpen && (
+          <form onSubmit={saveLesson} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <input value={lessonTitle} onChange={e => setLessonTitle(e.target.value)} placeholder="Lesson/topic title" className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <input type="number" value={lessonOrder} onChange={e => setLessonOrder(Number(e.target.value))} className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <select value={lessonStatus} onChange={e => setLessonStatus(e.target.value as Status)} className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select>
+            <div className="flex gap-2"><button className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold">Save</button><button type="button" onClick={resetLessonForm} className="px-3 py-1.5 bg-white border rounded-lg text-xs font-bold">Cancel</button></div>
+          </form>
+        )}
+        <div className="space-y-2 max-h-72 overflow-auto">
+          {filteredLessons.length === 0 ? <p className="text-xs text-slate-400 italic">No lessons/topics yet.</p> : filteredLessons.map(lesson => (
+            <div key={lesson.id} className={`p-3 rounded-xl border ${lesson.id === safeSelectedLessonId ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-slate-50/60'}`}>
+              <button type="button" onClick={() => { setSelectedLessonId(lesson.id); setSelectedSectionId(''); }} className="text-left w-full">
+                <div className="font-bold text-xs text-slate-800">{lesson.order_index}. {lesson.title}</div>
+                <span className={sourceBadge(lesson.status)}>{lesson.status}</span>
+              </button>
+              <div className="flex gap-1 mt-2"><button type="button" onClick={() => startEditLesson(lesson)} className="p-1 text-slate-500"><Edit2 className="w-3.5 h-3.5" /></button><button type="button" onClick={() => archiveLesson(lesson)} className="p-1 text-amber-600"><RefreshCw className="w-3.5 h-3.5" /></button><button type="button" onClick={() => deleteLesson(lesson)} className="p-1 text-red-500"><Trash2 className="w-3.5 h-3.5" /></button></div>
             </div>
+          ))}
+        </div>
+      </div>
 
-            {/* Quick Stats Integrated cleanly */}
-            <div className="flex flex-wrap items-center gap-4 mt-4 pt-3.5 border-t border-slate-100 text-[11px] text-slate-500">
-              <span className="font-semibold flex items-center gap-1.5 text-slate-400 uppercase tracking-wider text-[9px]">
-                <BarChart3 className="w-3.5 h-3.5 text-slate-400" /> Stats:
-              </span>
-              <span className="bg-slate-100 px-2.5 py-1 rounded-full text-slate-700">
-                Total: <strong className="font-semibold text-slate-800">{resources.length}</strong>
-              </span>
-              <span className="bg-red-50 px-2.5 py-1 rounded-full text-red-700">
-                Filtered: <strong className="font-semibold">{filteredResources.length}</strong>
-              </span>
-              <span className="bg-blue-50 px-2.5 py-1 rounded-full text-blue-700">
-                Approved: <strong className="font-semibold">{filteredResources.filter(r => r.approval_status === 'approved').length}</strong>
-              </span>
-            </div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><Layers className="w-4 h-4 text-red-600" /> Sections / Parts</h3>
+          <button type="button" disabled={!safeSelectedLessonId} onClick={() => { resetSectionForm(); setSectionFormOpen(true); }} className="text-[10px] font-bold text-red-600 flex items-center gap-1 disabled:opacity-40"><Plus className="w-3 h-3" /> Add</button>
+        </div>
+        {sectionFormOpen && (
+          <form onSubmit={saveSection} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <input value={sectionTitle} onChange={e => setSectionTitle(e.target.value)} placeholder="Section/part title" className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <input type="number" value={sectionOrder} onChange={e => setSectionOrder(Number(e.target.value))} className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <select value={sectionStatus} onChange={e => setSectionStatus(e.target.value as Status)} className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select>
+            <select value={sectionCciCardId} onChange={e => setSectionCciCardId(e.target.value)} className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg">
+              <option value="">No default CCI — use room default</option>
+              {activeCciCards.map(card => <option key={card.id} value={card.id}>{card.label} · X={card.standard_value}</option>)}
+            </select>
+            <div className="flex gap-2"><button className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold">Save</button><button type="button" onClick={resetSectionForm} className="px-3 py-1.5 bg-white border rounded-lg text-xs font-bold">Cancel</button></div>
+          </form>
+        )}
+        <div className="space-y-2 max-h-72 overflow-auto">
+          {filteredSections.length === 0 ? <p className="text-xs text-slate-400 italic">No parts yet.</p> : filteredSections.map(section => {
+            const cci = activeCciCards.find(card => card.id === section.default_cci_standard_card_id);
+            return (
+              <div key={section.id} className={`p-3 rounded-xl border ${section.id === selectedSectionId ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-slate-50/60'}`}>
+                <button type="button" onClick={() => setSelectedSectionId(section.id)} className="text-left w-full">
+                  <div className="font-bold text-xs text-slate-800">{section.order_index}. {section.title}</div>
+                  <div className="flex flex-wrap gap-1 mt-1"><span className={sourceBadge(section.status)}>{section.status}</span><span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full px-2 py-0.5 font-bold">{cci ? `CCI: ${cci.label}` : 'CCI: room default'}</span></div>
+                </button>
+                <div className="flex gap-1 mt-2"><button type="button" onClick={() => startEditSection(section)} className="p-1 text-slate-500"><Edit2 className="w-3.5 h-3.5" /></button><button type="button" onClick={() => archiveSection(section)} className="p-1 text-amber-600"><RefreshCw className="w-3.5 h-3.5" /></button><button type="button" onClick={() => deleteSection(section)} className="p-1 text-red-500"><Trash2 className="w-3.5 h-3.5" /></button></div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 
+  const renderTopicPrep = () => (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-black text-slate-900 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-red-600" /> Full Topic Prep</h3>
+          <p className="text-xs text-slate-500 mt-1">Shows how many parts a topic has, sentence readiness, audio gaps, CVR range, and default CCI by section topic.</p>
+        </div>
+        <span className={`px-3 py-1 rounded-full text-[10px] font-black border ${topicPrep?.ready ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>{topicPrep?.ready ? 'READY' : 'NEEDS PREP'}</span>
+      </div>
+      {!topicPrep ? <p className="text-xs text-slate-400 italic">Select a lesson/topic to inspect readiness.</p> : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+            {[
+              ['Parts', topicPrep.sectionCount], ['Resources', topicPrep.resourceCount], ['Approved', topicPrep.approvedResourceCount], ['Draft', topicPrep.draftResourceCount], ['Archived', topicPrep.archivedResourceCount], ['Missing EN', topicPrep.missingEnAudioCount], ['Missing VI', topicPrep.missingViAudioCount]
+            ].map(([label, value]) => <div key={label} className="bg-slate-50 border border-slate-100 rounded-xl p-3"><div className="text-[9px] font-black text-slate-400 uppercase">{label}</div><div className="text-lg font-black text-slate-800">{value}</div></div>)}
           </div>
-
-          {/* Full-Width Sentences List & Editor */}
-          <div className="space-y-6">
-            
-            {/* Header controls */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <div className="flex flex-wrap items-center gap-3">
-                <h2 className="text-sm font-bold text-slate-800">
-                  List Resources ({filteredResources.length})
-                </h2>
-                {/* Toggle List / Card View */}
-                <div className="flex items-center bg-slate-200/60 p-0.5 rounded-lg border border-slate-200/50">
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('card')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                      viewMode === 'card'
-                        ? 'bg-white text-slate-800 shadow-xs border border-slate-200/20'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5" />
-                    Cards
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('list')}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                      viewMode === 'list'
-                        ? 'bg-white text-slate-800 shadow-xs border border-slate-200/20'
-                        : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    <ListIcon className="w-3.5 h-3.5" />
-                    List
-                  </button>
-                </div>
-              </div>
-              
-              {/* Pagination Controls inside the header controls line */}
-              <div className="flex flex-wrap items-center gap-3 sm:gap-4 md:justify-end ml-auto md:ml-0">
-                {/* Page Size Selector */}
-                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-xs">
-                  <span className="text-[10px] text-slate-500 font-bold whitespace-nowrap">Rows:</span>
-                  <select
-                    value={itemsPerPage}
-                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                    className="text-[10px] sm:text-[11px] font-bold text-slate-700 bg-transparent border-none outline-none cursor-pointer pr-1"
-                  >
-                    <option value={8}>8</option>
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                  </select>
-                </div>
-
-                {filteredResources.length > itemsPerPage && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] sm:text-[11px] text-slate-500 font-medium whitespace-nowrap">
-                      {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredResources.length)} of {filteredResources.length}
-                    </span>
-                    <nav className="isolate inline-flex -space-x-px rounded-md shadow-xs bg-white" aria-label="Pagination">
-                      <button
-                        type="button"
-                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                        disabled={currentPage === 1}
-                        className="relative inline-flex items-center rounded-l-md p-1.5 text-slate-400 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
-                      >
-                        <span className="sr-only">Previous</span>
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                          <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
-                        </svg>
-                      </button>
-                      
-                      {(() => {
-                        const maxButtons = 5;
-                        let start = Math.max(1, currentPage - Math.floor(maxButtons / 2));
-                        let end = Math.min(totalPages, start + maxButtons - 1);
-                        if (end - start + 1 < maxButtons) {
-                          start = Math.max(1, end - maxButtons + 1);
-                        }
-                        const buttons = [];
-                        for (let i = start; i <= end; i++) {
-                          if (i >= 1 && i <= totalPages) {
-                            buttons.push(i);
-                          }
-                        }
-                        return buttons.map(page => (
-                          <button
-                            key={page}
-                            type="button"
-                            onClick={() => setCurrentPage(page)}
-                            aria-current={currentPage === page ? "page" : undefined}
-                            className={`relative inline-flex items-center px-2 py-1 text-[11px] font-bold focus:z-20 ${
-                              currentPage === page
-                                ? 'z-10 bg-red-600 text-white focus-visible:outline focus-visible:outline-2'
-                                : 'text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50'
-                            }`}
-                          >
-                            {page}
-                          </button>
-                        ));
-                      })()}
-
-                      <button
-                        type="button"
-                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                        disabled={currentPage === totalPages}
-                        className="relative inline-flex items-center rounded-r-md p-1.5 text-slate-400 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
-                      >
-                        <span className="sr-only">Next</span>
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                          <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
-                        </svg>
-                      </button>
-                    </nav>
-                  </div>
-                )}
-
-                {useSandbox && !showAddResource && (
-                  <button
-                    onClick={() => setShowAddResource(true)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded text-xs font-semibold transition-colors shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Create Sentence
-                  </button>
-                )}
-              </div>
+          {(topicPrep.blockingReasons.length > 0 || topicPrep.warningReasons.length > 0) && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              {[...topicPrep.blockingReasons, ...topicPrep.warningReasons].join(' • ')}
             </div>
+          )}
+          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 font-black"><tr><th className="p-3">Part</th><th className="p-3">Resources</th><th className="p-3">Audio gaps</th><th className="p-3">CVR</th><th className="p-3">Default CCI</th><th className="p-3">State</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {topicPrep.sections.length === 0 ? <tr><td colSpan={6} className="p-6 text-center text-slate-400 italic">No sections/parts configured.</td></tr> : topicPrep.sections.map(section => (
+                  <tr key={section.sectionId}>
+                    <td className="p-3"><button type="button" onClick={() => setSelectedSectionId(section.sectionId)} className="font-bold text-slate-800 hover:text-red-600">{section.orderIndex}. {section.sectionTitle}</button><div className="font-mono text-[9px] text-slate-400">{section.sectionId.slice(0, 8)}</div></td>
+                    <td className="p-3">{section.approvedResourceCount}/{section.resourceCount} approved<br/><span className="text-slate-400">{section.draftResourceCount} draft · {section.archivedResourceCount} archived</span></td>
+                    <td className="p-3">EN {section.missingEnAudioCount} · VI {section.missingViAudioCount}</td>
+                    <td className="p-3">{section.minCvr == null ? '—' : `${section.minCvr}–${section.maxCvr}`}</td>
+                    <td className="p-3">{section.defaultCciLabel ? `${section.defaultCciLabel} · X=${section.defaultCciStandardValue}` : <span className="text-amber-700 font-bold">Missing</span>}</td>
+                    <td className="p-3"><span className={`px-2 py-1 rounded-full text-[10px] font-black border ${section.ready ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>{section.ready ? 'Ready' : 'Needs prep'}</span>{section.blockingReasons.length > 0 && <div className="text-[10px] text-amber-700 mt-1">{section.blockingReasons.join(' • ')}</div>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
 
-            {/* Bulk Resource Actions */}
-            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-slate-800">Selected resources: {selectedResourceIds.length}</span>
-                    <button
-                      type="button"
-                      onClick={toggleCurrentPageSelection}
-                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold transition-colors"
-                    >
-                      {allPageSelected ? 'Unselect Page' : 'Select Page'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={selectAllFilteredResources}
-                      disabled={filteredResources.length === 0}
-                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded text-[10px] font-bold transition-colors"
-                    >
-                      Select All Filtered ({filteredResources.length})
-                    </button>
-                    {selectedResourceIds.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedResourceIds([])}
-                        className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded text-[10px] font-bold transition-colors"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-slate-500">
-                    Bulk tools update live Supabase rows only after confirmation. TTS uses Edge Function <strong>generate-resource-audio</strong> and will ask for the TTS admin PIN if not cached.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">Set CVR Ω</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0.1"
-                      value={bulkCvrValue}
-                      onChange={(e) => setBulkCvrValue(Number(e.target.value))}
-                      className="w-20 text-xs p-1 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none font-mono font-bold"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleBulkUpdateCvr}
-                      disabled={bulkCvrBusy || selectedResourceIds.length === 0}
-                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-500 text-white rounded text-[10px] font-bold transition-colors"
-                    >
-                      {bulkCvrBusy ? 'Saving...' : 'Apply'}
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleBulkGenerateMissingAudio('en')}
-                    disabled={bulkTtsBusy || selectedResourceIds.length === 0}
-                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold transition-colors"
-                  >
-                    Generate Missing EN
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBulkGenerateMissingAudio('vi')}
-                    disabled={bulkTtsBusy || selectedResourceIds.length === 0}
-                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-100 rounded text-[10px] font-bold transition-colors"
-                  >
-                    Generate Missing VI
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBulkGenerateMissingAudio('both')}
-                    disabled={bulkTtsBusy || selectedResourceIds.length === 0}
-                    className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-500 text-white rounded text-[10px] font-bold transition-colors"
-                  >
-                    {bulkTtsBusy ? 'Generating...' : 'Generate Missing Both'}
-                  </button>
-                </div>
-              </div>
-              {bulkActionStatus && (
-                <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg p-2 font-medium">
-                  {bulkActionStatus}
-                </div>
-              )}
-            </div>
-
-            {/* Add / Edit Form */}
-            {showAddResource && (
-              <form onSubmit={handleSaveResource} className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                  <h3 className="font-sans font-semibold text-xs text-slate-800">
-                    {editingResourceId ? `Edit Sentence resource: ${resCode}` : "Create New Sentence Prompt"}
-                  </h3>
-                  <button 
-                    type="button" 
-                    onClick={resetResourceForm}
-                    className="text-slate-400 hover:text-slate-600 text-xs"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                  <div className="md:col-span-3">
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">SENTENCE CODE</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. A-004"
-                      value={resCode}
-                      onChange={(e) => setResCode(e.target.value)}
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                    />
-                  </div>
-                  <div className="md:col-span-4">
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">CVR Ω MULTIPLIER</label>
-                    <input 
-                      type="number" 
-                      step="0.1"
-                      value={resCvr}
-                      onChange={(e) => setResCvr(Number(e.target.value))}
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                    />
-                  </div>
-                  <div className="md:col-span-5">
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">APPROVAL STATUS</label>
-                    <select
-                      value={resStatus}
-                      onChange={(e: any) => setResStatus(e.target.value)}
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                    >
-                      <option value="draft">Draft (Invisible to Teacher Setup)</option>
-                      <option value="approved">Approved (Launch-Ready)</option>
-                      <option value="archived">Archived</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 block mb-1">ASSIGN TO SECTION</label>
-                  <select
-                    value={resSectionId}
-                    onChange={(e) => setResSectionId(e.target.value)}
-                    className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                  >
-                    <option value="">No Section (General Lesson Prompt)</option>
-                    {filteredSections.map(s => (
-                      <option key={s.id} value={s.id}>{s.title}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 block mb-1">TEXT PROMPT (TEACHER CHALLENGE)</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. Tell the receptionist you want to check in"
-                    value={resPrompt}
-                    onChange={(e) => setResPrompt(e.target.value)}
-                    className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">ENGLISH SOURCE (EN_TEXT)</label>
-                    <textarea 
-                      placeholder="English target output..."
-                      value={resEn}
-                      onChange={(e) => setResEn(e.target.value)}
-                      rows={2}
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">VIETNAMESE TRANS (VI_TEXT)</label>
-                    <textarea 
-                      placeholder="Vietnamese explanation..."
-                      value={resVi}
-                      onChange={(e) => setResVi(e.target.value)}
-                      rows={2}
-                      className="w-full text-xs p-2 bg-white border border-slate-200 rounded focus:ring-1 focus:ring-red-500 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button 
-                    type="button" 
-                    onClick={resetResourceForm}
-                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs font-semibold"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit" 
-                    className="px-4 py-1.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded text-xs font-semibold"
-                  >
-                    Save Sentence
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* List or Card Resource Display */}
-            {viewMode === 'list' ? (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs animate-in fade-in duration-200">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                        <th className="py-3 px-4 w-10 text-center">
-                          <input
-                            type="checkbox"
-                            checked={allPageSelected}
-                            onChange={toggleCurrentPageSelection}
-                            className="rounded border-slate-300 text-red-600 focus:ring-red-500"
-                            aria-label="Select all resources on current page"
-                          />
-                        </th>
-                        <th className="py-3 px-4 w-12 text-center">STT</th>
-                        <th className="py-3 px-4 w-44">COURSE / LESSON</th>
-                        <th className="py-3 px-4">CONTENT / TRANSLATION</th>
-                        <th className="py-3 px-4 w-28 text-center">METRICS</th>
-                        <th className="py-3 px-4 w-52">AUDIO PLAYBACK</th>
-                        {useSandbox && <th className="py-3 px-4 w-20 text-right">ACTIONS</th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                      {filteredResources.length === 0 ? (
-                        <tr>
-                          <td colSpan={useSandbox ? 7 : 6} className="text-center py-12 text-slate-400 italic">
-                            No resources found.
-                          </td>
-                        </tr>
-                      ) : (
-                        paginatedResources.map((r, idx) => (
-                          <tr key={r.id} className={`hover:bg-slate-50/50 transition-colors ${selectedResourceIds.includes(r.id) ? 'bg-red-50/30' : ''}`}>
-                            <td className="py-3.5 px-4 text-center">
-                              <input
-                                type="checkbox"
-                                checked={selectedResourceIds.includes(r.id)}
-                                onChange={() => toggleResourceSelection(r.id)}
-                                className="rounded border-slate-300 text-red-600 focus:ring-red-500"
-                                aria-label={`Select resource ${r.sentence_code}`}
-                              />
-                            </td>
-                            <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-400">
-                              #{startIndex + idx + 1}
-                            </td>
-                            <td className="py-3.5 px-4 space-y-0.5">
-                              {(() => {
-                                const course = courses.find(c => c.id === r.course_id);
-                                const lesson = lessons.find(l => l.id === r.lesson_id);
-                                return (
-                                  <>
-                                    <div className="text-[11px] font-bold text-slate-800 truncate max-w-[170px]" title={course?.title || 'Unknown Course'}>
-                                      📚 {course?.title || 'Unknown Course'}
-                                    </div>
-                                    <div className="text-[10px] text-slate-500 font-medium truncate max-w-[170px]" title={lesson?.title || 'Unknown Lesson'}>
-                                      📖 {lesson?.title || 'Unknown Lesson'}
-                                    </div>
-                                  </>
-                                );
-                              })()}
-                            </td>
-                            <td className="py-3.5 px-4 space-y-1">
-                              <div className="flex items-start gap-2">
-                                <span className="px-1 bg-blue-50 text-blue-600 rounded text-[9px] font-bold mt-0.5 shrink-0">EN</span>
-                                <span className="text-slate-800 font-medium leading-normal">{r.text_en || <span className="text-slate-400 italic">None</span>}</span>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <span className="px-1 bg-red-50 text-red-600 rounded text-[9px] font-bold mt-0.5 shrink-0">VI</span>
-                                <span className="text-slate-500 leading-normal">{r.text_vi || <span className="text-slate-400 italic">None</span>}</span>
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 text-center">
-                              <div className="flex flex-col items-center justify-center">
-                                <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg font-bold font-mono border border-indigo-100">
-                                  Ω {r.cvr_value}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 space-y-1.5">
-                              {/* EN Audio Button */}
-                              <div className="flex items-center justify-between text-[11px]">
-                                <span className="text-slate-400 font-medium text-[10px] tracking-wider uppercase font-mono mr-1">EN:</span>
-                                {r.audio_en_url ? (
-                                  <button 
-                                    type="button"
-                                    onClick={() => playAudio(r.audio_en_url!, r.id + '_en', r.updated_at)}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all w-32 justify-center ${
-                                      currentlyPlaying === r.id + '_en' 
-                                        ? 'bg-red-500 text-white animate-pulse' 
-                                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100'
-                                    }`}
-                                  >
-                                    <Volume2 className="w-3 h-3" />
-                                    {currentlyPlaying === r.id + '_en' ? 'Playing' : 'Ready (Play)'}
-                                  </button>
-                                ) : (
-                                  <button 
-                                    type="button"
-                                    onClick={() => handleQueueAudio(r.id, 'en')}
-                                    className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] font-semibold transition-colors w-32 text-center"
-                                  >
-                                    + Generate
-                                  </button>
-                                )}
-                              </div>
-
-                              {/* VI Audio Button */}
-                              <div className="flex items-center justify-between text-[11px]">
-                                <span className="text-slate-400 font-medium text-[10px] tracking-wider uppercase font-mono mr-1">VI:</span>
-                                {r.audio_vi_url ? (
-                                  <button 
-                                    type="button"
-                                    onClick={() => playAudio(r.audio_vi_url!, r.id + '_vi', r.updated_at)}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all w-32 justify-center ${
-                                      currentlyPlaying === r.id + '_vi' 
-                                        ? 'bg-red-500 text-white animate-pulse' 
-                                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-100'
-                                    }`}
-                                  >
-                                    <Volume2 className="w-3 h-3" />
-                                    {currentlyPlaying === r.id + '_vi' ? 'Playing' : 'Ready (Play)'}
-                                  </button>
-                                ) : (
-                                  <button 
-                                    type="button"
-                                    onClick={() => handleQueueAudio(r.id, 'vi')}
-                                    className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] font-semibold transition-colors w-32 text-center"
-                                  >
-                                    + Generate
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                            {useSandbox && (
-                              <td className="py-3.5 px-4 text-right">
-                                <div className="flex items-center justify-end gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleEditResourceClick(r)}
-                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
-                                    title="Edit Sentence"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteResource(r.id)}
-                                    className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                    title="Delete Sentence"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-200">
-                {filteredResources.length === 0 ? (
-                  <div className="col-span-2 text-center py-12 border border-dashed border-slate-300 rounded-xl bg-slate-50 text-slate-400 text-xs">
-                    No sentence resources found in this lesson / section. Create some to start.
-                  </div>
-                ) : (
-                  paginatedResources.map((r, idx) => (
-                    <div key={r.id} className={`bg-white border rounded-2xl p-5 shadow-xs hover:shadow-sm transition-all flex flex-col justify-between min-h-[180px] ${selectedResourceIds.includes(r.id) ? 'border-red-300 ring-1 ring-red-100 bg-red-50/20' : 'border-slate-200 hover:border-slate-300'}`}>
-                      <div>
-                        {/* Top: English and Vietnamese text block with STT index */}
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex items-start gap-2 flex-1">
-                            <input
-                              type="checkbox"
-                              checked={selectedResourceIds.includes(r.id)}
-                              onChange={() => toggleResourceSelection(r.id)}
-                              className="mt-1 rounded border-slate-300 text-red-600 focus:ring-red-500 shrink-0"
-                              aria-label={`Select resource ${r.sentence_code}`}
-                            />
-                            <div className="space-y-2 flex-1">
-                            <div className="flex items-start gap-2">
-                              <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-extrabold mt-0.5 shrink-0">EN</span>
-                              <span className="text-slate-800 font-bold leading-relaxed text-[13px]">{r.text_en || 'None'}</span>
-                            </div>
-                            <div className="flex items-start gap-2">
-                              <span className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-[9px] font-extrabold mt-0.5 shrink-0">VI</span>
-                              <span className="text-slate-500 font-semibold leading-relaxed text-[12px]">{r.text_vi || 'None'}</span>
-                            </div>
-                            </div>
-                          </div>
-                          
-                          <span className="text-[10px] font-bold text-slate-400 font-mono bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
-                            #{startIndex + idx + 1}
-                          </span>
-                        </div>
-
-                        {/* Middle: Course & Lesson info ("chuyển span xuống") */}
-                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                          {(() => {
-                            const course = courses.find(c => c.id === r.course_id);
-                            const lesson = lessons.find(l => l.id === r.lesson_id);
-                            return (
-                              <span className="text-[11px] text-slate-500 font-bold truncate max-w-[90%]" title={`${course?.title || 'Unknown Course'} / ${lesson?.title || 'Unknown Lesson'}`}>
-                                📚 {course?.title || 'Unknown'} / 📖 {lesson?.title || 'Unknown'}
-                              </span>
-                            );
-                          })()}
-                        </div>
-                      </div>
-
-                      {/* Bottom action bar: Audio playback + CVR + Actions aligned horizontally! */}
-                      <div className="mt-4 pt-3.5 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-                        {/* Left: Audio Status Links & Buttons */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="flex items-center gap-1">
-                            {r.audio_en_url ? (
-                              <button 
-                                type="button"
-                                onClick={() => playAudio(r.audio_en_url!, r.id + '_en', r.updated_at)}
-                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                                  currentlyPlaying === r.id + '_en' 
-                                    ? 'bg-red-500 text-white animate-pulse' 
-                                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100/80 border border-emerald-100'
-                                }`}
-                              >
-                                <Volume2 className="w-3 h-3" /> EN Play
-                              </button>
-                            ) : (
-                              <button 
-                                type="button"
-                                onClick={() => handleQueueAudio(r.id, 'en')}
-                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold transition-colors"
-                              >
-                                + EN Audio
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            {r.audio_vi_url ? (
-                              <button 
-                                type="button"
-                                onClick={() => playAudio(r.audio_vi_url!, r.id + '_vi', r.updated_at)}
-                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                                  currentlyPlaying === r.id + '_vi' 
-                                    ? 'bg-red-500 text-white animate-pulse' 
-                                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100/80 border border-emerald-100'
-                                }`}
-                              >
-                                <Volume2 className="w-3 h-3" /> VI Play
-                              </button>
-                            ) : (
-                              <button 
-                                type="button"
-                                onClick={() => handleQueueAudio(r.id, 'vi')}
-                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold transition-colors"
-                              >
-                                + VI Audio
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Right: Difficulty CVR value & Edit/Delete actions in one nice aligned row! */}
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded-lg font-bold font-mono border border-indigo-100/50" title="CVR Difficulty Multiplier">
-                            Ω {r.cvr_value}
-                          </span>
-
-                          {useSandbox && (
-                            <div className="flex items-center gap-1 border-l border-slate-200 pl-2">
-                              <button
-                                type="button"
-                                onClick={() => handleEditResourceClick(r)}
-                                className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"
-                                title="Edit Sentence"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteResource(r.id)}
-                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                title="Delete Sentence"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
+  const renderGenerator = () => (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-black text-slate-900 flex items-center gap-2"><Wand2 className="w-4 h-4 text-red-600" /> Lesson Generator Candidate</h3>
+          <p className="text-xs text-slate-500 mt-1">Calls only the trusted Supabase Edge Function proxy. Generated content must be reviewed before saving.</p>
+        </div>
+        <button type="button" onClick={() => setGeneratorOpen(open => !open)} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold">{generatorOpen ? 'Hide' : 'Generate'}</button>
+      </div>
+      {generatorOpen && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-3 bg-slate-50 border border-slate-100 rounded-xl p-4">
+            <input value={generatorForm.theme} onChange={e => setGeneratorForm(prev => ({ ...prev, theme: e.target.value }))} placeholder="Theme (defaults to selected lesson)" className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <div className="grid grid-cols-3 gap-2"><input type="number" step="0.1" min="1" max="2" value={generatorForm.topicLevel} onChange={e => setGeneratorForm(prev => ({ ...prev, topicLevel: Number(e.target.value) }))} className="text-xs p-2 bg-white border border-slate-200 rounded-lg" /><select value={generatorForm.sentenceLength} onChange={e => setGeneratorForm(prev => ({ ...prev, sentenceLength: e.target.value as any }))} className="text-xs p-2 bg-white border border-slate-200 rounded-lg"><option>Very Short</option><option>Short</option><option>Medium</option><option>Long</option></select><input type="number" step="0.1" value={generatorForm.iValue} onChange={e => setGeneratorForm(prev => ({ ...prev, iValue: Number(e.target.value) }))} className="text-xs p-2 bg-white border border-slate-200 rounded-lg" /></div>
+            <textarea value={generatorForm.resourceText} onChange={e => setGeneratorForm(prev => ({ ...prev, resourceText: e.target.value }))} rows={5} placeholder="One resource per line: say goodbye politely | Blue | 5 | optional hint" className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg" />
+            <button type="button" onClick={requestCandidate} disabled={generatorBusy} className="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold disabled:opacity-50">{generatorBusy ? 'Generating...' : 'Request Candidate'}</button>
+          </div>
+          <div className="bg-slate-950 text-slate-100 rounded-xl p-4 min-h-[220px]">
+            {!candidate ? <p className="text-xs text-slate-400 italic">No candidate yet. Response will appear here for review before save.</p> : (
+              <div className="space-y-3">
+                <div><div className="text-[10px] text-slate-500 font-black uppercase">English</div><p className="text-sm font-semibold">{candidate.engSentence}</p></div>
+                <div><div className="text-[10px] text-slate-500 font-black uppercase">Vietnamese</div><p className="text-sm font-semibold">{candidate.vieSentence}</p></div>
+                <div className="text-xs text-slate-300">Ohm: <strong>{candidate.totalOhm ?? candidate.uTotal ?? '—'}</strong> · Difficulty: {candidate.difficultyLabel || '—'}</div>
+                <div className="flex gap-2"><button type="button" onClick={() => saveCandidate('draft')} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-bold">Review as Draft</button><button type="button" onClick={() => saveCandidate('approved')} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold">Review as Approved</button></div>
               </div>
             )}
-
           </div>
         </div>
       )}
+    </div>
+  );
+
+  const renderResourceEditor = () => resourceFormOpen && (
+    <form onSubmit={saveResource} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
+      <div className="flex items-center justify-between border-b border-slate-200 pb-3"><h3 className="text-xs font-black text-slate-800">{editingResourceId ? `Edit ${resCode}` : 'Create Sentence Resource'}</h3><button type="button" onClick={resetResourceForm} className="text-xs text-slate-500">Cancel</button></div>
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3"><input value={resCode} onChange={e => setResCode(e.target.value)} placeholder="Sentence code" className="md:col-span-3 text-xs p-2 bg-white border rounded-lg" /><input type="number" step="0.1" value={resCvr} onChange={e => setResCvr(Number(e.target.value))} className="md:col-span-2 text-xs p-2 bg-white border rounded-lg" /><select value={resStatus} onChange={e => setResStatus(e.target.value as ResourceStatus)} className="md:col-span-3 text-xs p-2 bg-white border rounded-lg"><option value="draft">Draft</option><option value="approved">Approved</option><option value="archived">Archived</option></select><select value={resSectionId} onChange={e => setResSectionId(e.target.value)} className="md:col-span-4 text-xs p-2 bg-white border rounded-lg"><option value="">No Section</option>{filteredSections.map(section => <option key={section.id} value={section.id}>{section.title}</option>)}</select></div>
+      <input value={resPrompt} onChange={e => setResPrompt(e.target.value)} placeholder="Teacher challenge prompt" className="w-full text-xs p-2 bg-white border rounded-lg" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3"><textarea value={resEn} onChange={e => setResEn(e.target.value)} rows={3} placeholder="English answer/source" className="text-xs p-2 bg-white border rounded-lg" /><textarea value={resVi} onChange={e => setResVi(e.target.value)} rows={3} placeholder="Vietnamese translation" className="text-xs p-2 bg-white border rounded-lg" /></div>
+      <div className="flex justify-end gap-2"><button type="button" onClick={resetResourceForm} className="px-3 py-1.5 bg-white border rounded-lg text-xs font-bold">Cancel</button><button className="px-4 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold">Save Sentence</button></div>
+    </form>
+  );
+
+  const renderResources = () => (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div><h3 className="text-sm font-black text-slate-900 flex items-center gap-2"><FileText className="w-4 h-4 text-red-600" /> Sentence Resources ({filteredResources.length})</h3><p className="text-xs text-slate-500">Add lesson content into the selected lesson/section.</p></div>
+        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setViewMode(viewMode === 'list' ? 'card' : 'list')} className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-bold flex items-center gap-1">{viewMode === 'list' ? <LayoutGrid className="w-3 h-3" /> : <ListIcon className="w-3 h-3" />} {viewMode === 'list' ? 'Cards' : 'List'}</button><button type="button" onClick={startCreateResource} disabled={!safeSelectedLessonId} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50"><Plus className="w-3 h-3" /> Create Sentence</button></div>
+      </div>
+      {renderResourceEditor()}
+      <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl p-3"><select value={selectedSectionId} onChange={e => setSelectedSectionId(e.target.value)} className="text-xs p-2 bg-white border rounded-lg"><option value="">All Sections</option>{filteredSections.map(section => <option key={section.id} value={section.id}>{section.title}</option>)}</select><select value={audioFilter} onChange={e => setAudioFilter(e.target.value as any)} className="text-xs p-2 bg-white border rounded-lg"><option value="all">All Audio</option><option value="missing_any">Missing Any</option><option value="missing_en">Missing EN</option><option value="missing_vi">Missing VI</option><option value="has_both">Has Both</option></select><select value={itemsPerPage} onChange={e => setItemsPerPage(Number(e.target.value))} className="text-xs p-2 bg-white border rounded-lg"><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></div>
+      {filteredResources.length === 0 ? <div className="p-10 text-center text-slate-400 italic border border-dashed rounded-xl">No resources match this scope.</div> : viewMode === 'list' ? (
+        <div className="overflow-x-auto border border-slate-100 rounded-xl"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500 font-black"><tr><th className="p-3">Code</th><th className="p-3">Content</th><th className="p-3">Section</th><th className="p-3">Metrics</th><th className="p-3">Audio</th><th className="p-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{paginatedResources.map(resource => {
+          const section = sections.find(s => s.id === resource.section_id);
+          return <tr key={resource.id}><td className="p-3 font-mono font-bold">{getShortSentenceCode(resource.sentence_code, resource.order_index)}<br/><span className={sourceBadge(resource.approval_status)}>{resource.approval_status}</span></td><td className="p-3"><div className="font-semibold text-slate-800">{resource.text_prompt || resource.text_en || 'No prompt'}</div><div className="text-slate-400 line-clamp-1">{resource.text_vi}</div></td><td className="p-3">{section?.title || 'General'}</td><td className="p-3">CVR Ω {resource.cvr_value || resource.default_cvr_value || 1}</td><td className="p-3"><div className="flex gap-1">{resource.audio_en_url ? <button type="button" onClick={() => playAudio(resource, 'en')} className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded text-[10px] font-bold">EN</button> : <button type="button" onClick={() => generateAudio(resource, 'en')} className="px-2 py-1 bg-amber-50 text-amber-700 rounded text-[10px] font-bold">+EN</button>}{resource.audio_vi_url ? <button type="button" onClick={() => playAudio(resource, 'vi')} className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded text-[10px] font-bold">VI</button> : <button type="button" onClick={() => generateAudio(resource, 'vi')} className="px-2 py-1 bg-amber-50 text-amber-700 rounded text-[10px] font-bold">+VI</button>}</div></td><td className="p-3"><div className="flex justify-end gap-1"><button type="button" onClick={() => startEditResource(resource)} className="p-1 text-slate-500"><Edit2 className="w-3.5 h-3.5" /></button><button type="button" onClick={() => archiveResource(resource)} className="p-1 text-red-500"><Trash2 className="w-3.5 h-3.5" /></button></div></td></tr>;
+        })}</tbody></table></div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{paginatedResources.map(resource => <div key={resource.id} className="border border-slate-100 bg-slate-50/50 rounded-xl p-4 space-y-2"><div className="flex justify-between gap-2"><span className="font-mono text-xs font-black text-red-700">{getShortSentenceCode(resource.sentence_code, resource.order_index)}</span><span className={sourceBadge(resource.approval_status)}>{resource.approval_status}</span></div><div className="font-semibold text-sm text-slate-800">{resource.text_prompt || resource.text_en}</div><p className="text-xs text-slate-500 line-clamp-2">{resource.text_vi}</p><div className="text-[10px] text-slate-400">CVR Ω {resource.cvr_value || resource.default_cvr_value || 1}</div><div className="flex gap-2"><button type="button" onClick={() => startEditResource(resource)} className="text-xs text-slate-600 font-bold">Edit</button><button type="button" onClick={() => archiveResource(resource)} className="text-xs text-red-600 font-bold">Archive</button></div></div>)}</div>
+      )}
+      {filteredResources.length > itemsPerPage && <div className="flex items-center justify-end gap-2"><button type="button" disabled={page === 1} onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} className="px-3 py-1 bg-slate-100 rounded text-xs font-bold disabled:opacity-50">Prev</button><span className="text-xs text-slate-500">Page {page}/{totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} className="px-3 py-1 bg-slate-100 rounded text-xs font-bold disabled:opacity-50">Next</button></div>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6" id="library-tab">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div>
+          <h2 className="text-base font-black text-slate-900 flex items-center gap-2"><BookOpen className="w-5 h-5 text-red-600" /> Library — Curriculum & Topic Prep</h2>
+          <p className="text-xs text-slate-500 mt-1">Manage courses, lessons/topics, parts, sentence resources, full-topic readiness, and section-topic CCI defaults.</p>
+        </div>
+        <a href="/settings" className="text-[10px] font-bold text-red-600 hover:text-red-700 uppercase tracking-wider">CCI/CVR standards in Settings</a>
+      </div>
+
+      {useSandbox && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex items-center gap-2"><AlertCircle className="w-4 h-4" /> Sandbox mode is deprecated for product Library flows. This page writes live Supabase data only.</div>
+      )}
+      {statusMessage && <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-900 font-semibold">{busy && <RefreshCw className="inline w-3 h-3 mr-1 animate-spin" />}{statusMessage}</div>}
+
+      {renderHierarchyManager()}
+      {renderTopicPrep()}
+      {renderGenerator()}
+      {renderResources()}
     </div>
   );
 }

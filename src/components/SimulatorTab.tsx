@@ -9,6 +9,7 @@ import { sandboxDb, supabase } from '../lib/supabaseClient';
 import { checkResourceAudioExists, resolveResourceAudioUrl } from '../lib/audioUrl';
 import { generateResourceAudio } from '../lib/ttsService';
 import { getShortSentenceCode } from '../lib/resourceCode';
+import { formatCciSource, resolveCciAssignment } from '../lib/liveData';
 import { 
   Plus, Play, Check, AlertTriangle, Users, BookOpen, Clock, Activity, 
   Award, RefreshCw, LogIn, UserCheck, Send, Volume2, Sparkles, AlertCircle, Trash2, Shield,
@@ -54,6 +55,7 @@ export default function SimulatorTab({
   const [setupLessonIds, setSetupLessonIds] = useState<string[]>([]);
   const [setupSectionIds, setSetupSectionIds] = useState<string[]>([]);
   const [setupCciCardId, setSetupCciCardId] = useState<string>('');
+  const [manualNextCciCardId, setManualNextCciCardId] = useState<string>('');
   const [setupCaptureMode, setSetupCaptureMode] = useState<'assigned' | 'first_responder' | 'auto_rotate'>('first_responder');
   const [setupScoringMode, setSetupScoringMode] = useState<'simple' | 'timed'>('simple');
 
@@ -480,6 +482,16 @@ export default function SimulatorTab({
     : getNextPlayableSentenceId(usedSentenceIdsForPreview);
   const nextPreviewResource = nextPreviewSentenceId ? resources.find(r => r.id === nextPreviewSentenceId) || null : null;
 
+  const getResolvedCciForResource = (resource: SentenceResource | null, manualCardId?: string | null) => {
+    const section = resource?.section_id ? sections.find(item => item.id === resource.section_id) || null : null;
+    return resolveCciAssignment({
+      manualCardId,
+      sectionDefaultCardId: section?.default_cci_standard_card_id || null,
+      roomDefaultCardId: setupCciCardId,
+      cciCards
+    });
+  };
+
   // Auto-play audio when a new round is opened for learners.
   useEffect(() => {
     if (activeRound && activeRound.status === 'open' && activeRound.id !== lastPlayedRoundId) {
@@ -731,7 +743,7 @@ export default function SimulatorTab({
           const opened = sandboxDb.openRound({
             roomId: activeRoom.id,
             sentenceResourceId: sentenceId,
-            cciStandardCardId: setupCciCardId,
+            cciStandardCardId: getResolvedCciForResource(resources.find(r => r.id === sentenceId) || null, manualNextCciCardId || null).card?.id || setupCciCardId,
             assignedLearnerId: assignedLearnerId,
             captureMode: activeRoom.default_response_capture_mode,
             scoringMode: activeRoom.scoring_mode,
@@ -745,13 +757,17 @@ export default function SimulatorTab({
             playSentenceAudio(resource);
             setLastPlayedRoundId(opened.id);
           }
+          setManualNextCciCardId('');
         } else {
           // Live Supabase implementation
-          const card = cciCards.find(c => c.id === setupCciCardId);
-          if (!card) throw new Error("CCI card not found");
-
           const resource = resources.find(r => r.id === sentenceId);
           if (!resource) throw new Error("Sentence resource not found");
+          const resolvedCci = getResolvedCciForResource(resource, manualNextCciCardId || null);
+          const card = resolvedCci.card;
+          if (!card) throw new Error("No active CCI card is available. Configure Settings → CCI & CVR first.");
+          if (resolvedCci.warning) {
+            setTeacherToast(resolvedCci.warning);
+          }
 
           const { count: existingRoundCount, error: countErr } = await supabase
             .from('room_rounds')
@@ -787,6 +803,7 @@ export default function SimulatorTab({
             .from('room_rounds')
             .insert([newRound]);
           if (insErr) throw insErr;
+          setManualNextCciCardId('');
 
           // Update room status
           const { error: updErr } = await supabase
@@ -2103,19 +2120,31 @@ export default function SimulatorTab({
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-slate-700">Next CCI:</span>
-                            <select
-                              value={setupCciCardId}
-                              onChange={(e) => setSetupCciCardId(e.target.value)}
-                              className="text-xs p-1.5 bg-white border border-red-100 rounded-lg focus:ring-1 focus:ring-red-500 max-w-[220px]"
-                              title="Applies to the next opened turn"
-                            >
-                              {cciCards.map(c => (
-                                <option key={c.id} value={c.id}>{c.label} (X={c.standard_value})</option>
-                              ))}
-                            </select>
-                          </div>
+                          {(() => {
+                            const activeRes = resources.find(r => r.id === activeRound.sentence_resource_id) || null;
+                            const resolved = getResolvedCciForResource(activeRes, manualNextCciCardId || null);
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-700">Next CCI:</span>
+                                  <select
+                                    value={manualNextCciCardId}
+                                    onChange={(e) => setManualNextCciCardId(e.target.value)}
+                                    className="text-xs p-1.5 bg-white border border-red-100 rounded-lg focus:ring-1 focus:ring-red-500 max-w-[240px]"
+                                    title="Optional manual override for the next opened turn"
+                                  >
+                                    <option value="">Auto: section default → room default</option>
+                                    {cciCards.map(c => (
+                                      <option key={c.id} value={c.id}>Override: {c.label} (X={c.standard_value})</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <span className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-100 rounded-full px-2 py-0.5 w-fit">
+                                  Resolved: {resolved.card?.label || 'Missing'} · {formatCciSource(resolved.source)}
+                                </span>
+                              </div>
+                            );
+                          })()}
 
                           <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none bg-red-50 border border-red-100 px-3 py-1.5 rounded-lg" title="Automatically play audio when a turn opens for learners.">
                             <input type="checkbox" checked={autoPlayAudio} onChange={(e) => setAutoPlayAudio(e.target.checked)} className="rounded text-red-600 focus:ring-red-500 border-red-200 w-4 h-4" />
@@ -2235,7 +2264,8 @@ export default function SimulatorTab({
                     {(() => {
                       const nextSentenceId = nextPreviewSentenceId;
                       const nextRes = nextPreviewResource;
-                      const nextCard = cciCards.find(c => c.id === setupCciCardId);
+                      const resolvedNextCci = getResolvedCciForResource(nextRes, manualNextCciCardId || null);
+                      const nextCard = resolvedNextCci.card;
                       const isComplete = sessionComplete;
                       return (
                         <>
@@ -2276,6 +2306,7 @@ export default function SimulatorTab({
                                         {getShortSentenceCode(nextRes.sentence_code, nextRes.order_index)}
                                       </span>
                                       <span className="text-[10px] text-indigo-700 font-bold">{nextCard?.label || 'Selected CCI'} • X={nextCard?.standard_value || 1}</span>
+                                      <span className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded">{formatCciSource(resolvedNextCci.source)}</span>
                                       <span className="text-[10px] text-red-700 font-bold">Ω={nextRes.cvr_value || nextRes.default_cvr_value || 1}</span>
                                     </div>
                                     {latestCapturedResponse && isBetweenTurnsAfterCapture && (
@@ -2343,17 +2374,23 @@ export default function SimulatorTab({
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-700">Next CCI:</span>
-                                <select
-                                  value={setupCciCardId}
-                                  onChange={(e) => setSetupCciCardId(e.target.value)}
-                                  className="text-xs p-1.5 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 max-w-[220px]"
-                                >
-                                  {cciCards.map(c => (
-                                    <option key={c.id} value={c.id}>{c.label} (X={c.standard_value})</option>
-                                  ))}
-                                </select>
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-700">Next CCI:</span>
+                                  <select
+                                    value={manualNextCciCardId}
+                                    onChange={(e) => setManualNextCciCardId(e.target.value)}
+                                    className="text-xs p-1.5 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-red-500 max-w-[240px]"
+                                  >
+                                    <option value="">Auto: section default → room default</option>
+                                    {cciCards.map(c => (
+                                      <option key={c.id} value={c.id}>Override: {c.label} (X={c.standard_value})</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5 w-fit">
+                                  Resolved: {nextCard?.label || 'Missing'} · {formatCciSource(resolvedNextCci.source)}
+                                </span>
                               </div>
 
                               <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-700 px-3 py-1.5 rounded-lg">

@@ -19,18 +19,20 @@ flowchart LR
     Firebase --> Supabase[(Supabase Postgres)]
     Firebase --> Storage[Supabase Storage]
     Firebase --> Edge[Supabase Edge Functions]
+    Edge --> M2M[Lesson Generator M2M]
     Supabase --> Reports[Reports and Progress]
 ```
 
 ## Main runtime areas
 
 - `src/App.tsx`: app shell, routing, live data loading
-- `src/components/SimulatorTab.tsx`: Teacher Console/live rooms
+- `src/components/SimulatorTab.tsx`: Teacher Console/live rooms, including section/topic CCI resolution at round open
 - `src/components/LearnerTerminalTab.tsx`: learner join/response UI
 - `src/components/SettingsTab.tsx`: learner roster/settings plus CCI category, CCI card, and CVR standards management
 - `src/components/HistoryTab.tsx`: reports/history with Session and Learner filters
-- `src/components/LibraryTab.tsx`: courses/materials/sentence resources only
+- `src/components/LibraryTab.tsx`: course/lesson/section hierarchy CRUD, sentence resources, full-topic readiness, section default CCI assignment, and generated candidate review
 - `src/components/AudioGeneratorTab.tsx`: audio/TTS jobs
+- `src/lib/lessonGeneratorClient.ts` + `supabase/functions/lesson-generator-proxy/`: browser-safe lesson-generator proxy path; M2M key stays server-side
 
 ## Deployment flow
 
