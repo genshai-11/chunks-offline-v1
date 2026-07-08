@@ -1268,6 +1268,36 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 11:20 GMT+7 — Add switchable Stacked Grade Share Bar Chart to Learner Sentence Timeline panel
+
+**Operator**: tamha with Craft Agent  
+**Commit**: `58269b3` and subsequent updates  
+**Tag**: `firebase-hosting-20260708-1120-stacked-grades`  
+**Preview URL**: N/A (Production-only release workflow)  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Add `timelineChartType` state (`line` | `stacked_grade`) inside `HistoryTab.tsx`.
+- Create `learnerGradeDistributionData` memo to calculate overall Purple/Green/Yellow/Red grade shares per student.
+- Add Chart Type dropdown to sidebar to allow switching views.
+- Implement conditional `BarChart` showing stacked grade segments with hover breakdown tooltips and bar click-filtering to focus on specific students.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- UI-only visualization updates. Zero database or scoring impacts.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>

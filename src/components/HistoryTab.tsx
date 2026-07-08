@@ -161,6 +161,7 @@ export default function HistoryTab({
   const [roomChartMetric, setRoomChartMetric] = useState<'cpd' | 'redRatio' | 'completion' | 'submissions'>('cpd');
   const [roomChartType, setRoomChartType] = useState<'bar' | 'line' | 'area'>('bar');
   const [learnerSentenceSortBy, setLearnerSentenceSortBy] = useState<'round' | 'cvr' | 'cci'>('round');
+  const [timelineChartType, setTimelineChartType] = useState<'line' | 'stacked_grade'>('line');
   const [progressChartTemplate, setProgressChartTemplate] = useState<ProgressChartTemplate>('learning_curve');
 
   const applyDatePreset = (preset: 'all' | 'today' | 'last7' | 'last30') => {
@@ -1202,6 +1203,28 @@ export default function HistoryTab({
     }).slice(0, 120);
   }, [filteredHistory, learnerSentenceSortBy, topLearnersWithColors]);
 
+  const learnerGradeDistributionData = useMemo(() => {
+    return topLearnersWithColors.map(learner => {
+      const learnerResponses = filteredHistory.filter(item => item.learner_id === learner.id);
+      const total = learnerResponses.length;
+      
+      const purple = learnerResponses.filter(r => (r.response_color || '').toLowerCase() === 'purple').length;
+      const green = learnerResponses.filter(r => (r.response_color || '').toLowerCase() === 'green').length;
+      const yellow = learnerResponses.filter(r => (r.response_color || '').toLowerCase() === 'yellow').length;
+      const red = learnerResponses.filter(r => (r.response_color || '').toLowerCase() === 'red').length;
+
+      return {
+        name: learner.displayName,
+        learnerId: learner.id,
+        purple: total > 0 ? Math.round((purple / total) * 100) : 0,
+        green: total > 0 ? Math.round((green / total) * 100) : 0,
+        yellow: total > 0 ? Math.round((yellow / total) * 100) : 0,
+        red: total > 0 ? Math.round((red / total) * 100) : 0,
+        totalCount: total
+      };
+    });
+  }, [filteredHistory, topLearnersWithColors]);
+
   const reportSubTabs = [
     { id: 'room-overview', label: 'Tổng quan', icon: Calendar },
     { id: 'leaderboard', label: 'Live-room', icon: Award },
@@ -1720,6 +1743,18 @@ export default function HistoryTab({
                   </select>
                 </div>
 
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Loại biểu đồ (Chart Type)</label>
+                  <select
+                    value={timelineChartType}
+                    onChange={(event) => setTimelineChartType(event.target.value as any)}
+                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-hidden focus:border-red-500 cursor-pointer"
+                  >
+                    <option value="line">Line Chart (Điểm CPD)</option>
+                    <option value="stacked_grade">Stacked Bar Chart (% phân bổ Grade)</option>
+                  </select>
+                </div>
+
                 {topLearnersWithColors.length > 0 && (
                   <div className="space-y-2 pt-2 border-t border-slate-200/60">
                     <label className="text-[10px] font-bold text-slate-400 uppercase block">Học Viên Lên Biểu Đồ ({topLearnersWithColors.length})</label>
@@ -1761,10 +1796,10 @@ export default function HistoryTab({
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
                   <BarChart2 className="w-4 h-4 text-indigo-600" />
-                  Đồ Thị Đường CPD Theo Từng Câu Hỏi
+                  {timelineChartType === 'stacked_grade' ? 'Phân Bổ Tỉ Lệ Điểm Số Học Viên' : 'Đồ Thị Đường CPD Theo Từng Câu Hỏi'}
                 </h4>
                 <span className="text-[9px] bg-indigo-50 text-indigo-600 font-mono font-bold px-2 py-0.5 rounded uppercase">
-                  X-Axis: {learnerSentenceSortBy.toUpperCase()}
+                  {timelineChartType === 'stacked_grade' ? 'Metric: Grade Share %' : `X-Axis: ${learnerSentenceSortBy.toUpperCase()}`}
                 </span>
               </div>
 
@@ -1776,148 +1811,208 @@ export default function HistoryTab({
                 ) : (
                   <div className="w-full h-72">
                     <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
-                      <LineChart data={learnerSentenceChartData} margin={{ top: 20, right: 20, left: -20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis 
-                          dataKey="name" 
-                          tick={{ fontSize: 9 }} 
-                          stroke="#94a3b8" 
-                        />
-                        <YAxis 
-                          tick={{ fontSize: 9 }} 
-                          stroke="#94a3b8" 
-                          unit="V"
-                        />
-                        <Tooltip
-                          content={({ active, payload }: any) => {
-                            if (!active || !payload?.length) return null;
-                            const activePoint = payload[0]?.payload;
-                            if (!activePoint) return null;
+                      {timelineChartType === 'stacked_grade' ? (
+                        <BarChart data={learnerGradeDistributionData} margin={{ top: 20, right: 20, left: -20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#94a3b8" />
+                          <YAxis tick={{ fontSize: 9 }} stroke="#94a3b8" unit="%" />
+                          <Tooltip
+                            content={({ active, payload }: any) => {
+                              if (!active || !payload?.length) return null;
+                              const data = payload[0]?.payload;
+                              if (!data) return null;
 
-                            const { rawPoint, sentenceCode, fullSentenceCode, roundIndex, cvrValue, cciStandardX, isRelative, order } = activePoint;
-                            return (
-                              <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-lg text-[11px] max-w-[260px] space-y-2.5 z-50">
-                                <div className="border-b border-slate-100 pb-1.5">
-                                  {isRelative ? (
-                                    <>
-                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thứ tự câu của Học viên</span>
-                                      <div className="font-bold text-slate-800 leading-tight">
-                                        Lượt phản hồi #{order}
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thông tin câu hỏi</span>
-                                      <div className="font-bold text-slate-800 leading-tight">
-                                        {sentenceCode} {fullSentenceCode && `(${fullSentenceCode})`}
-                                      </div>
-                                      <div className="flex gap-2 text-[9px] text-slate-500 font-mono mt-0.5">
-                                        <span>Round: R{roundIndex}</span>
-                                        <span>CVR: Ω{formatCompactNumber(cvrValue)}</span>
-                                        <span>CCI X: {formatCompactNumber(cciStandardX)}</span>
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-
-                                <div className="space-y-2 max-h-40 overflow-y-auto">
-                                  <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Chi tiết học viên (CPD)</span>
-                                  {topLearnersWithColors.map(learner => {
-                                    const res = rawPoint.responses[learner.id];
-                                    if (!res) return null;
-                                    return (
-                                      <div key={learner.id} className="border-b border-slate-50 last:border-0 pb-1.5 last:pb-0">
-                                        <div className="flex items-center justify-between gap-3 py-0.5">
-                                          <div className="flex items-center gap-1 truncate">
-                                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: learner.color }} />
-                                            <span className="font-medium text-slate-700 truncate">{learner.displayName}</span>
-                                          </div>
-                                          <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
-                                            <span className="font-bold text-slate-900">{res.cpd}V</span>
-                                            <span className={`px-1 rounded-[3px] text-[8px] font-extrabold uppercase scale-90 ${
-                                              res.grade === 'purple' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
-                                              res.grade === 'green' ? 'bg-green-50 text-green-600 border border-green-100' :
-                                              res.grade === 'yellow' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
-                                              'bg-red-50 text-red-600 border border-red-100'
-                                            }`}>
-                                              {res.grade}
-                                            </span>
-                                          </div>
-                                        </div>
-                                        {isRelative && (
-                                          <div className="flex gap-2 text-[8px] text-slate-400 font-mono mt-0.5 pl-2.5">
-                                            <span>R{res.roundIndex}</span>
-                                            <span>•</span>
-                                            <span className="truncate">{res.sentenceCode}</span>
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Legend 
-                          verticalAlign="bottom" 
-                          height={36} 
-                          iconType="circle" 
-                          iconSize={8}
-                          wrapperStyle={{ fontSize: '9px', paddingTop: '10px', cursor: 'pointer' }}
-                          onClick={(data) => {
-                            const learnerId = data.dataKey;
-                            if (learnerId) {
-                              setHiddenLearnerIds(prev =>
-                                prev.includes(learnerId)
-                                  ? prev.filter(id => id !== learnerId)
-                                  : [...prev, learnerId]
-                              );
-                            }
-                          }}
-                        />
-                        {topLearnersWithColors.map((learner) => (
-                          <Line
-                            key={learner.id}
-                            hide={hiddenLearnerIds.includes(learner.id)}
-                            type="monotone"
-                            dataKey={learner.id}
-                            name={learner.displayName}
-                            stroke={learner.color}
-                            strokeWidth={2}
-                            dot={(dotProps: any) => {
-                              const { cx, cy, payload } = dotProps;
-                              const res = payload?.rawPoint?.responses?.[learner.id];
-                              if (!res || payload[learner.id] == null) return <g key={`dot-${learner.id}-${cx}`} />;
-                              const gradeHex =
-                                res.grade === 'purple' ? '#a855f7' :
-                                res.grade === 'green'  ? '#22c55e' :
-                                res.grade === 'yellow' ? '#eab308' :
-                                '#ef4444';
                               return (
-                                <circle
-                                  key={`dot-${learner.id}-${cx}`}
-                                  cx={cx}
-                                  cy={cy}
-                                  r={5}
-                                  fill={gradeHex}
-                                  stroke="#fff"
-                                  strokeWidth={1.5}
-                                  className="cursor-pointer hover:r-6 hover:stroke-width-2 transition-all"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    // Set global learner filter to focus on this student
-                                    setSelectedLearnerIds([learner.id]);
-                                  }}
-                                  style={{ cursor: 'pointer' }}
-                                />
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-lg text-[11px] max-w-[240px] space-y-1.5 z-50">
+                                  <div className="font-bold text-slate-800 border-b border-slate-100 pb-1 mb-1">
+                                    {data.name}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 font-semibold uppercase">Tỉ lệ phân bổ (Tổng: {data.totalCount} lượt)</div>
+                                  <div className="space-y-1 mt-1">
+                                    <div className="flex items-center justify-between text-purple-600 font-semibold">
+                                      <span>🟣 Purple (Y=3):</span>
+                                      <span>{data.purple}%</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-green-600 font-semibold">
+                                      <span>🟢 Green (Y=2):</span>
+                                      <span>{data.green}%</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-yellow-600 font-semibold">
+                                      <span>🟡 Yellow (Y=1):</span>
+                                      <span>{data.yellow}%</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-red-600 font-semibold">
+                                      <span>🔴 Red (Y=0):</span>
+                                      <span>{data.red}%</span>
+                                    </div>
+                                  </div>
+                                </div>
                               );
                             }}
-                            activeDot={{ r: 7 }}
-                            connectNulls={true}
                           />
-                        ))}
-                      </LineChart>
+                          <Legend 
+                            verticalAlign="bottom" 
+                            height={36} 
+                            iconType="circle" 
+                            iconSize={8}
+                            wrapperStyle={{ fontSize: '9px', paddingTop: '10px' }}
+                          />
+                          <Bar dataKey="purple" name="Purple" stackId="a" fill="#a855f7" radius={[0, 0, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
+                            if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
+                          }} />
+                          <Bar dataKey="green" name="Green" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
+                            if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
+                          }} />
+                          <Bar dataKey="yellow" name="Yellow" stackId="a" fill="#eab308" radius={[0, 0, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
+                            if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
+                          }} />
+                          <Bar dataKey="red" name="Red" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
+                            if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
+                          }} />
+                        </BarChart>
+                      ) : (
+                        <LineChart data={learnerSentenceChartData} margin={{ top: 20, right: 20, left: -20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis 
+                            dataKey="name" 
+                            tick={{ fontSize: 9 }} 
+                            stroke="#94a3b8" 
+                          />
+                          <YAxis 
+                            tick={{ fontSize: 9 }} 
+                            stroke="#94a3b8" 
+                            unit="V"
+                          />
+                          <Tooltip
+                            content={({ active, payload }: any) => {
+                              if (!active || !payload?.length) return null;
+                              const activePoint = payload[0]?.payload;
+                              if (!activePoint) return null;
+
+                              const { rawPoint, sentenceCode, fullSentenceCode, roundIndex, cvrValue, cciStandardX, isRelative, order } = activePoint;
+                              return (
+                                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-lg text-[11px] max-w-[260px] space-y-2.5 z-50">
+                                  <div className="border-b border-slate-100 pb-1.5">
+                                    {isRelative ? (
+                                      <>
+                                        <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thứ tự câu của Học viên</span>
+                                        <div className="font-bold text-slate-800 leading-tight">
+                                          Lượt phản hồi #{order}
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thông tin câu hỏi</span>
+                                        <div className="font-bold text-slate-800 leading-tight">
+                                          {sentenceCode} {fullSentenceCode && `(${fullSentenceCode})`}
+                                        </div>
+                                        <div className="flex gap-2 text-[9px] text-slate-500 font-mono mt-0.5">
+                                          <span>Round: R{roundIndex}</span>
+                                          <span>CVR: Ω{formatCompactNumber(cvrValue)}</span>
+                                          <span>CCI X: {formatCompactNumber(cciStandardX)}</span>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                                    <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Chi tiết học viên (CPD)</span>
+                                    {topLearnersWithColors.map(learner => {
+                                      const res = rawPoint.responses[learner.id];
+                                      if (!res) return null;
+                                      return (
+                                        <div key={learner.id} className="border-b border-slate-50 last:border-0 pb-1.5 last:pb-0">
+                                          <div className="flex items-center justify-between gap-3 py-0.5">
+                                            <div className="flex items-center gap-1 truncate">
+                                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: learner.color }} />
+                                              <span className="font-medium text-slate-700 truncate">{learner.displayName}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
+                                              <span className="font-bold text-slate-900">{res.cpd}V</span>
+                                              <span className={`px-1 rounded-[3px] text-[8px] font-extrabold uppercase scale-90 ${
+                                                res.grade === 'purple' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
+                                                res.grade === 'green' ? 'bg-green-50 text-green-600 border border-green-100' :
+                                                res.grade === 'yellow' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
+                                                'bg-red-50 text-red-600 border border-red-100'
+                                              }`}>
+                                                {res.grade}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          {isRelative && (
+                                            <div className="flex gap-2 text-[8px] text-slate-400 font-mono mt-0.5 pl-2.5">
+                                              <span>R{res.roundIndex}</span>
+                                              <span>•</span>
+                                              <span className="truncate">{res.sentenceCode}</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Legend 
+                            verticalAlign="bottom" 
+                            height={36} 
+                            iconType="circle" 
+                            iconSize={8}
+                            wrapperStyle={{ fontSize: '9px', paddingTop: '10px', cursor: 'pointer' }}
+                            onClick={(data) => {
+                              const learnerId = data.dataKey;
+                              if (learnerId) {
+                                setHiddenLearnerIds(prev =>
+                                  prev.includes(learnerId)
+                                    ? prev.filter(id => id !== learnerId)
+                                    : [...prev, learnerId]
+                                );
+                              }
+                            }}
+                          />
+                          {topLearnersWithColors.map((learner) => (
+                            <Line
+                              key={learner.id}
+                              hide={hiddenLearnerIds.includes(learner.id)}
+                              type="monotone"
+                              dataKey={learner.id}
+                              name={learner.displayName}
+                              stroke={learner.color}
+                              strokeWidth={2}
+                              dot={(dotProps: any) => {
+                                const { cx, cy, payload } = dotProps;
+                                const res = payload?.rawPoint?.responses?.[learner.id];
+                                if (!res || payload[learner.id] == null) return <g key={`dot-${learner.id}-${cx}`} />;
+                                const gradeHex =
+                                  res.grade === 'purple' ? '#a855f7' :
+                                  res.grade === 'green'  ? '#22c55e' :
+                                  res.grade === 'yellow' ? '#eab308' :
+                                  '#ef4444';
+                                return (
+                                  <circle
+                                    key={`dot-${learner.id}-${cx}`}
+                                    cx={cx}
+                                    cy={cy}
+                                    r={5}
+                                    fill={gradeHex}
+                                    stroke="#fff"
+                                    strokeWidth={1.5}
+                                    className="cursor-pointer hover:r-6 hover:stroke-width-2 transition-all"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedLearnerIds([learner.id]);
+                                    }}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                );
+                              }}
+                              activeDot={{ r: 7 }}
+                              connectNulls={true}
+                            />
+                          ))}
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   </div>
                 )}
