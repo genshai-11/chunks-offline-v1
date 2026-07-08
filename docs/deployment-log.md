@@ -1122,6 +1122,35 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 
 - Zero database schema impact. Extremely low risk UI-only fix.
 
+## 2026-07-08 07:33 GMT+7 — Add Learner Sentence Timeline line chart component
+
+**Operator**: tamha with Craft Agent  
+**Commit**: [Pending user commit]  
+**Tag**: [Pending user tag, recommended: `firebase-hosting-20260708-0733-learner-sentence-timeline`]  
+**Preview URL**: [Pending deploy]  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Implement the "Learner Sentence Timeline — CPD by sentence point" as a Recharts `LineChart` replacing the old scatter timeline in `HistoryTab.tsx`.
+- Reshape the response history to support up to 10 lines of different colors, mapping each line to a student.
+- Add an interactive "Sort X" selector supporting round chronological sequence, CVR Ω value ascending, and CCI Standard X ascending.
+- Embed the controls and chart in a responsive grid layout wrapper (`bg-white border border-slate-200 rounded-2xl p-5 shadow-xs grid grid-cols-1 lg:grid-cols-12 gap-6`).
+- Create a rich interactive `<Tooltip>` containing sentence metadata (round, CVR, CCI card) and student list showing their color and CPD values.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- Zero database schema impact. UI-only enhancement to the Reports & History tab.
+
 ---
 
 ## Template for future entries

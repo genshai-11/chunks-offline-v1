@@ -951,39 +951,142 @@ export default function HistoryTab({
     });
   }, [leaderboardData, roomChartMetric]);
 
-  const learnerSentenceChartData = useMemo(() => {
-    const sorted = [...filteredHistory].sort((a, b) => {
-      const roundA = Number(a.round?.round_index || 0);
-      const roundB = Number(b.round?.round_index || 0);
-      if (learnerSentenceSortBy === 'cvr') {
-        const diff = Number(a.cvr_value || 0) - Number(b.cvr_value || 0);
-        if (diff !== 0) return diff;
-      } else if (learnerSentenceSortBy === 'cci') {
-        const diff = Number(a.cci_standard_x || 0) - Number(b.cci_standard_x || 0);
-        if (diff !== 0) return diff;
+  const topLearnersWithColors = useMemo(() => {
+    const learnerCounts: Record<string, { id: string; displayName: string; count: number }> = {};
+    filteredHistory.forEach(item => {
+      const id = item.learner_id;
+      const name = item.learner?.display_name || `Student (${id.substring(0, 5)})`;
+      if (!learnerCounts[id]) {
+        learnerCounts[id] = { id, displayName: name, count: 0 };
       }
-      if (roundA !== roundB) return roundA - roundB;
-      return new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime();
+      learnerCounts[id].count += 1;
     });
 
-    return sorted.map((item, index) => ({
-      order: index + 1,
-      name: learnerSentenceSortBy === 'round'
-        ? `R${item.round?.round_index || index + 1}`
+    const palette = [
+      '#3b82f6', // Blue
+      '#ef4444', // Red
+      '#10b981', // Emerald
+      '#f59e0b', // Amber
+      '#8b5cf6', // Violet
+      '#ec4899', // Pink
+      '#06b6d4', // Cyan
+      '#f97316', // Orange
+      '#14b8a6', // Teal
+      '#6366f1', // Indigo
+    ];
+
+    return Object.values(learnerCounts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+      .map((l, idx) => ({
+        ...l,
+        color: palette[idx % palette.length]
+      }));
+  }, [filteredHistory]);
+
+  const learnerSentenceChartData = useMemo(() => {
+    // 1. Group responses by round / sentence point
+    const pointsMap = new Map<string, {
+      roundId: string;
+      roundIndex: number;
+      sentenceId: string;
+      sentenceCode: string;
+      fullSentenceCode: string;
+      cvrValue: number;
+      cciStandardX: number;
+      submittedAt: string;
+      responses: Record<string, {
+        cpd: number;
+        cvr: number;
+        cci: number;
+        performanceY: number;
+        grade: string;
+        submittedAt: string;
+      }>;
+    }>();
+
+    filteredHistory.forEach(item => {
+      const roundId = item.round_id || '';
+      const sentenceId = item.sentence?.id || '';
+      const roundIndex = item.round?.round_index || 0;
+      const groupKey = roundId || sentenceId || `idx-${roundIndex}`;
+
+      if (!groupKey) return;
+
+      const cvrVal = Number(item.cvr_value || item.sentence?.cvr_value || 0);
+      const cciX = Number(item.cci_standard_x || item.sentence?.cci_standard_x || 0);
+      const sentenceCode = getShortSentenceCode(item.sentence?.sentence_code, item.sentence?.order_index);
+      const fullSentenceCode = item.sentence?.sentence_code || '';
+
+      if (!pointsMap.has(groupKey)) {
+        pointsMap.set(groupKey, {
+          roundId,
+          roundIndex,
+          sentenceId,
+          sentenceCode,
+          fullSentenceCode,
+          cvrValue: cvrVal,
+          cciStandardX: cciX,
+          submittedAt: item.submitted_at,
+          responses: {}
+        });
+      }
+
+      const group = pointsMap.get(groupKey)!;
+      const learnerId = item.learner_id;
+      const existingRes = group.responses[learnerId];
+      const cpdVal = Math.round(Number(item.cpd_result || 0) * 10) / 10;
+      if (!existingRes || cpdVal > existingRes.cpd) {
+        group.responses[learnerId] = {
+          cpd: cpdVal,
+          cvr: Number(item.cvr_value || 0),
+          cci: Number(item.cci_standard_x || 0),
+          performanceY: Number(item.performance_y || 0),
+          grade: item.response_color || 'red',
+          submittedAt: item.submitted_at
+        };
+      }
+    });
+
+    const sortedPoints = Array.from(pointsMap.values()).sort((a, b) => {
+      if (learnerSentenceSortBy === 'cvr') {
+        return a.cvrValue - b.cvrValue;
+      } else if (learnerSentenceSortBy === 'cci') {
+        return a.cciStandardX - b.cciStandardX;
+      } else {
+        if (a.roundIndex !== b.roundIndex) {
+          return a.roundIndex - b.roundIndex;
+        }
+        return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+      }
+    });
+
+    return sortedPoints.map((pt, idx) => {
+      const name = learnerSentenceSortBy === 'round'
+        ? `R${pt.roundIndex || idx + 1}`
         : learnerSentenceSortBy === 'cvr'
-          ? `Ω${formatCompactNumber(item.cvr_value)}`
-          : `X${formatCompactNumber(item.cci_standard_x)}`,
-      sentence: getShortSentenceCode(item.sentence?.sentence_code, item.sentence?.order_index),
-      fullSentenceCode: item.sentence?.sentence_code || '',
-      learner: item.learner?.display_name || 'Anonymous',
-      round: item.round?.round_index || index + 1,
-      cpd: Math.round(Number(item.cpd_result || 0) * 10) / 10,
-      cvr: Number(item.cvr_value || 0),
-      cci: Number(item.cci_standard_x || 0),
-      performanceY: Number(item.performance_y || 0),
-      grade: item.response_color || 'red'
-    })).slice(0, 120);
-  }, [filteredHistory, learnerSentenceSortBy]);
+          ? `Ω${formatCompactNumber(pt.cvrValue)}`
+          : `X${formatCompactNumber(pt.cciStandardX)}`;
+
+      const dataPoint: any = {
+        order: idx + 1,
+        name,
+        sentenceCode: pt.sentenceCode,
+        fullSentenceCode: pt.fullSentenceCode,
+        roundIndex: pt.roundIndex,
+        cvrValue: pt.cvrValue,
+        cciStandardX: pt.cciStandardX,
+        rawPoint: pt
+      };
+
+      topLearnersWithColors.forEach(learner => {
+        const res = pt.responses[learner.id];
+        dataPoint[learner.id] = res ? res.cpd : null;
+      });
+
+      return dataPoint;
+    }).slice(0, 120);
+  }, [filteredHistory, learnerSentenceSortBy, topLearnersWithColors]);
 
   const reportSubTabs = [
     { id: 'room-overview', label: 'Tổng quan', icon: Calendar },
@@ -1395,69 +1498,166 @@ export default function HistoryTab({
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-4 flex flex-col justify-between space-y-4 bg-slate-50 border border-slate-100 rounded-xl p-4">
+              <div className="space-y-4">
+                <div className="flex items-center gap-1.5 pb-2 border-b border-slate-200/80">
                   <ArrowUpDown className="w-4 h-4 text-indigo-600" />
-                  Learner Sentence Timeline — CPD by sentence point
-                </h4>
-                <p className="text-[10px] text-slate-400 mt-0.5">Use this when a learner has 24+ responses: sort by real round order, CVR Ω ascending, or CCI Standard X ascending to see CPD movement and grade color per sentence.</p>
-              </div>
-              <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-                Sort X:
-                <select
-                  value={learnerSentenceSortBy}
-                  onChange={(event) => setLearnerSentenceSortBy(event.target.value as any)}
-                  className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 cursor-pointer"
-                >
-                  <option value="round">Round / time order</option>
-                  <option value="cvr">CVR Ω ascending</option>
-                  <option value="cci">CCI Standard X ascending</option>
-                </select>
-              </label>
-            </div>
-            <div className="w-full h-80">
-              {learnerSentenceChartData.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-xs text-slate-400 italic">No sentence responses match current filters.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
-                  <ScatterChart margin={{ top: 28, right: 20, left: -18, bottom: 28 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis
-                      type="number"
-                      dataKey="order"
-                      tick={{ fontSize: 9 }}
-                      stroke="#94a3b8"
-                      tickFormatter={(value) => learnerSentenceChartData[Number(value) - 1]?.name || String(value)}
-                    />
-                    <YAxis type="number" dataKey="cpd" name="CPD" unit="V" tick={{ fontSize: 9 }} stroke="#94a3b8" />
-                    <Tooltip
-                      cursor={{ strokeDasharray: '3 3' }}
-                      content={({ active, payload }: any) => {
-                        if (!active || !payload?.length) return null;
-                        const row = payload[0].payload;
-                        return (
-                          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] shadow-sm">
-                            <div className="font-black text-slate-800 mb-1">{row.learner} • {row.sentence} • R{row.round}</div>
-                            <div className="font-mono text-red-600 font-bold">CPD: {formatCompactNumber(row.cpd)}V</div>
-                            <div className="font-mono text-emerald-600">CVR: Ω{formatCompactNumber(row.cvr)}</div>
-                            <div className="font-mono text-indigo-600">CCI X: {formatCompactNumber(row.cci)} • Y: {row.performanceY}</div>
-                            <div className="font-mono text-slate-500 capitalize">Grade: {row.grade}</div>
-                            {row.fullSentenceCode && <div className="font-mono text-slate-400 mt-1">{row.fullSentenceCode}</div>}
-                          </div>
-                        );
-                      }}
-                    />
-                    <Scatter name="Sentence responses" data={learnerSentenceChartData} line={{ stroke: '#94a3b8', strokeWidth: 1.5 }}>
-                      <LabelList dataKey="sentence" position="top" style={{ fill: '#334155', fontSize: 9, fontWeight: 800 }} />
-                      {learnerSentenceChartData.map((entry, index) => (
-                        <Cell key={`learner-sentence-point-${index}`} fill={getGradeColor(entry.grade)} />
+                  <h3 className="font-sans font-bold text-xs text-slate-500 uppercase tracking-wider">
+                    Lịch sử câu hỏi học viên
+                  </h3>
+                </div>
+
+                <div className="space-y-1">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                    Learner Sentence Timeline
+                  </h4>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    Theo dõi điểm CPD theo từng câu hỏi/round. Biểu đồ đường hiển thị tối đa 10 học viên phản hồi nhiều nhất để so sánh trực quan.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Sắp xếp Trục X (Sort X)</label>
+                  <select
+                    value={learnerSentenceSortBy}
+                    onChange={(event) => setLearnerSentenceSortBy(event.target.value as any)}
+                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-hidden focus:border-red-500 cursor-pointer"
+                  >
+                    <option value="round">Round / time order</option>
+                    <option value="cvr">CVR Ω ascending</option>
+                    <option value="cci">CCI Standard X ascending</option>
+                  </select>
+                </div>
+
+                {topLearnersWithColors.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-slate-200/60">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block">Học Viên Lên Biểu Đồ ({topLearnersWithColors.length})</label>
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px] font-semibold text-slate-600">
+                      {topLearnersWithColors.map(l => (
+                        <div key={l.id} className="flex items-center gap-1.5 truncate" title={l.displayName}>
+                          <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ backgroundColor: l.color }} />
+                          <span className="truncate">{l.displayName}</span>
+                        </div>
                       ))}
-                    </Scatter>
-                  </ScatterChart>
-                </ResponsiveContainer>
-              )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-[10px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed">
+                <span className="font-bold text-slate-700 block mb-0.5">Biểu đồ so sánh đa đường</span>
+                Đường đứt quãng được kết nối tự động (`connectNulls`) nếu học viên bỏ lỡ lượt trả lời ở một số round.
+              </div>
+            </div>
+
+            <div className="lg:col-span-8 flex flex-col justify-between" style={{ minHeight: '320px' }}>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                  <BarChart2 className="w-4 h-4 text-indigo-600" />
+                  Đồ Thị Đường CPD Theo Từng Câu Hỏi
+                </h4>
+                <span className="text-[9px] bg-indigo-50 text-indigo-600 font-mono font-bold px-2 py-0.5 rounded uppercase">
+                  X-Axis: {learnerSentenceSortBy.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="flex-1 w-full flex items-center justify-center pt-4">
+                {learnerSentenceChartData.length === 0 ? (
+                  <div className="text-center text-xs text-slate-400 italic py-16">
+                    Không có bản ghi điểm số nào khớp với bộ lọc để dựng đồ thị.
+                  </div>
+                ) : (
+                  <div className="w-full h-72">
+                    <ResponsiveContainer width="100%" height="100%" style={{ width: '100%', height: '100%', display: 'block' }}>
+                      <LineChart data={learnerSentenceChartData} margin={{ top: 20, right: 20, left: -20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="name" 
+                          tick={{ fontSize: 9 }} 
+                          stroke="#94a3b8" 
+                        />
+                        <YAxis 
+                          tick={{ fontSize: 9 }} 
+                          stroke="#94a3b8" 
+                          unit="V"
+                        />
+                        <Tooltip
+                          content={({ active, payload }: any) => {
+                            if (!active || !payload?.length) return null;
+                            const activePoint = payload[0]?.payload;
+                            if (!activePoint) return null;
+
+                            const { rawPoint, sentenceCode, fullSentenceCode, roundIndex, cvrValue, cciStandardX } = activePoint;
+                            return (
+                              <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-lg text-[11px] max-w-[260px] space-y-2.5 z-50">
+                                <div className="border-b border-slate-100 pb-1.5">
+                                  <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thông tin câu hỏi</span>
+                                  <div className="font-bold text-slate-800 leading-tight">
+                                    {sentenceCode} {fullSentenceCode && `(${fullSentenceCode})`}
+                                  </div>
+                                  <div className="flex gap-2 text-[9px] text-slate-500 font-mono mt-0.5">
+                                    <span>Round: R{roundIndex}</span>
+                                    <span>CVR: Ω{formatCompactNumber(cvrValue)}</span>
+                                    <span>CCI X: {formatCompactNumber(cciStandardX)}</span>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                                  <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Chi tiết học viên (CPD)</span>
+                                  {topLearnersWithColors.map(learner => {
+                                    const res = rawPoint.responses[learner.id];
+                                    if (!res) return null;
+                                    return (
+                                      <div key={learner.id} className="flex items-center justify-between gap-3 py-0.5">
+                                        <div className="flex items-center gap-1 truncate">
+                                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: learner.color }} />
+                                          <span className="font-medium text-slate-700 truncate">{learner.displayName}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
+                                          <span className="font-bold text-slate-900">{res.cpd}V</span>
+                                          <span className={`px-1 rounded-[3px] text-[8px] font-extrabold uppercase scale-90 ${
+                                            res.grade === 'purple' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
+                                            res.grade === 'green' ? 'bg-green-50 text-green-600 border border-green-100' :
+                                            res.grade === 'yellow' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
+                                            'bg-red-50 text-red-600 border border-red-100'
+                                          }`}>
+                                            {res.grade}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Legend 
+                          verticalAlign="bottom" 
+                          height={36} 
+                          iconType="circle" 
+                          iconSize={8}
+                          wrapperStyle={{ fontSize: '9px', paddingTop: '10px' }}
+                        />
+                        {topLearnersWithColors.map((learner) => (
+                          <Line
+                            key={learner.id}
+                            type="monotone"
+                            dataKey={learner.id}
+                            name={learner.displayName}
+                            stroke={learner.color}
+                            strokeWidth={2}
+                            dot={{ r: 3, strokeWidth: 1 }}
+                            activeDot={{ r: 5 }}
+                            connectNulls={true}
+                          />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
