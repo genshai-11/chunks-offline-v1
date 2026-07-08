@@ -10,7 +10,8 @@ import DataExplorerTab from './DataExplorerTab';
 import { 
   History, Calendar, Award, Star, BarChart2, PieChart, Users, CheckCircle, 
   HelpCircle, ChevronDown, ChevronUp, Plus, Trash2, Sliders, Filter,
-  Activity, Sparkles, BookOpen, Clock, Settings, ToggleLeft, RefreshCw, BarChart3, ListCollapse, ArrowUpDown
+  Activity, Sparkles, BookOpen, Clock, Settings, ToggleLeft, RefreshCw, BarChart3, ListCollapse, ArrowUpDown,
+  Eye, EyeOff
 } from 'lucide-react';
 import { 
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area, 
@@ -162,6 +163,7 @@ export default function HistoryTab({
   const [roomChartType, setRoomChartType] = useState<'bar' | 'line' | 'area'>('bar');
   const [learnerSentenceSortBy, setLearnerSentenceSortBy] = useState<'round' | 'cvr' | 'cci'>('round');
   const [timelineChartType, setTimelineChartType] = useState<'line' | 'stacked_grade'>('line');
+  const [showBarLabels, setShowBarLabels] = useState<boolean>(true);
   const [progressChartTemplate, setProgressChartTemplate] = useState<ProgressChartTemplate>('learning_curve');
 
   const applyDatePreset = (preset: 'all' | 'today' | 'last7' | 'last30') => {
@@ -1798,9 +1800,21 @@ export default function HistoryTab({
                   <BarChart2 className="w-4 h-4 text-indigo-600" />
                   {timelineChartType === 'stacked_grade' ? 'Phân Bổ Tỉ Lệ Điểm Số Học Viên' : 'Đồ Thị Đường CPD Theo Từng Câu Hỏi'}
                 </h4>
-                <span className="text-[9px] bg-indigo-50 text-indigo-600 font-mono font-bold px-2 py-0.5 rounded uppercase">
-                  {timelineChartType === 'stacked_grade' ? 'Metric: Grade Share %' : `X-Axis: ${learnerSentenceSortBy.toUpperCase()}`}
-                </span>
+                <div className="flex items-center gap-2">
+                  {timelineChartType === 'stacked_grade' && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBarLabels(!showBarLabels)}
+                      className="p-1 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-lg text-slate-500 hover:text-slate-700 transition-colors cursor-pointer flex items-center justify-center"
+                      title={showBarLabels ? "Ẩn nhãn phần trăm trên cột" : "Hiển thị nhãn phần trăm trên cột"}
+                    >
+                      {showBarLabels ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+                  <span className="text-[9px] bg-indigo-50 text-indigo-600 font-mono font-bold px-2 py-0.5 rounded uppercase">
+                    {timelineChartType === 'stacked_grade' ? 'Metric: Grade Share %' : `X-Axis: ${learnerSentenceSortBy.toUpperCase()}`}
+                  </span>
+                </div>
               </div>
 
               <div className="flex-1 w-full flex items-center justify-center pt-4">
@@ -1859,16 +1873,32 @@ export default function HistoryTab({
                           />
                           <Bar dataKey="purple" name="Purple" stackId="a" fill="#a855f7" radius={[0, 0, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
                             if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
-                          }} />
+                          }}>
+                            {showBarLabels && (
+                              <LabelList dataKey="purple" position="center" formatter={(v: number) => v > 8 ? `${v}%` : ''} style={{ fill: '#fff', fontSize: 8, fontWeight: 'bold' }} />
+                            )}
+                          </Bar>
                           <Bar dataKey="green" name="Green" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
                             if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
-                          }} />
+                          }}>
+                            {showBarLabels && (
+                              <LabelList dataKey="green" position="center" formatter={(v: number) => v > 8 ? `${v}%` : ''} style={{ fill: '#fff', fontSize: 8, fontWeight: 'bold' }} />
+                            )}
+                          </Bar>
                           <Bar dataKey="yellow" name="Yellow" stackId="a" fill="#eab308" radius={[0, 0, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
                             if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
-                          }} />
+                          }}>
+                            {showBarLabels && (
+                              <LabelList dataKey="yellow" position="center" formatter={(v: number) => v > 8 ? `${v}%` : ''} style={{ fill: '#fff', fontSize: 8, fontWeight: 'bold' }} />
+                            )}
+                          </Bar>
                           <Bar dataKey="red" name="Red" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} style={{ cursor: 'pointer' }} onClick={(data) => {
                             if (data?.learnerId) setSelectedLearnerIds([data.learnerId]);
-                          }} />
+                          }}>
+                            {showBarLabels && (
+                              <LabelList dataKey="red" position="center" formatter={(v: number) => v > 8 ? `${v}%` : ''} style={{ fill: '#fff', fontSize: 8, fontWeight: 'bold' }} />
+                            )}
+                          </Bar>
                         </BarChart>
                       ) : (
                         <LineChart data={learnerSentenceChartData} margin={{ top: 20, right: 20, left: -20, bottom: 5 }}>

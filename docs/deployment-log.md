@@ -1298,6 +1298,35 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 11:32 GMT+7 — Add percent label show/hide toggle to stacked bar chart
+
+**Operator**: tamha with Craft Agent  
+**Commit**: `5bcadb4` and subsequent updates  
+**Tag**: `firebase-hosting-20260708-1130-label-toggle`  
+**Preview URL**: N/A (Production-only release workflow)  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Add `showBarLabels` state variable to track the visibility of percentage labels inside bar segments.
+- Add Eye/EyeOff toggle button to stacked chart card header.
+- Add `<LabelList>` components inside `<Bar>` tags to conditionally render values (`{val}%`) inside each segment when enabled (gated for segments > 8% for clean visual layout).
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- UI-only dashboard enhancement. Zero database or scoring impacts.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
