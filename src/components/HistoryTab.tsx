@@ -1626,19 +1626,7 @@ export default function HistoryTab({
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase block">2. Chỉ Số (Y-Metric)</label>
-                  <select
-                    value={roomChartMetric}
-                    onChange={(e) => setRoomChartMetric(e.target.value as any)}
-                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-none focus:border-red-500 cursor-pointer"
-                  >
-                    <option value="cpd">Max CPD đạt được (V)</option>
-                    <option value="redRatio">Tỷ Lệ Không Đọc Được (Card Đỏ %)</option>
-                    <option value="completion">Tỷ Lệ Hoàn Thành Bài (Non-Red %)</option>
-                    <option value="submissions">Tổng Số Lượt Trả Lời (Câu)</option>
-                  </select>
-                </div>
+                {/* Y-Metric control moved directly to the chart header for direct visual context */}
               </div>
 
               <div className="text-[11px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed">
@@ -1648,14 +1636,23 @@ export default function HistoryTab({
             </div>
 
             <div className="lg:col-span-8 flex flex-col justify-between" style={{ minHeight: '320px' }}>
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 gap-4">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
                   <BarChart2 className="w-4 h-4 text-red-600" />
                   Đồ Thị Động Thống Kê Theo Học Viên
                 </h4>
-                <span className="text-[9px] bg-red-50 text-red-600 font-mono font-bold px-2 py-0.5 rounded uppercase">
-                  Metric: {roomChartMetric.toUpperCase()}
-                </span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={roomChartMetric}
+                    onChange={(e) => setRoomChartMetric(e.target.value as any)}
+                    className="text-[10px] font-semibold bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 outline-none focus:border-red-500 cursor-pointer"
+                  >
+                    <option value="cpd">Max CPD đạt được (V)</option>
+                    <option value="redRatio">Tỷ Lệ Card Đỏ (%)</option>
+                    <option value="completion">Tỷ Lệ Hoàn Thành (%)</option>
+                    <option value="submissions">Tổng Lượt Trả Lời (Câu)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="flex-1 w-full flex items-center justify-center pt-4">
@@ -1730,92 +1727,82 @@ export default function HistoryTab({
                   <p className="text-[10px] text-slate-400 leading-relaxed">
                     Theo dõi điểm CPD theo từng câu hỏi/round. Biểu đồ đường hiển thị tối đa 10 học viên phản hồi nhiều nhất để so sánh trực quan.
                   </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Sắp xếp Trục X (Sort X)</label>
-                  <select
-                    value={learnerSentenceSortBy}
-                    onChange={(event) => setLearnerSentenceSortBy(event.target.value as any)}
-                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-hidden focus:border-red-500 cursor-pointer"
-                  >
-                    <option value="round">Round / time order</option>
-                    <option value="cvr">CVR Ω ascending</option>
-                    <option value="cci">CCI Standard X ascending</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Loại biểu đồ (Chart Type)</label>
-                  <select
-                    value={timelineChartType}
-                    onChange={(event) => setTimelineChartType(event.target.value as any)}
-                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-slate-700 outline-hidden focus:border-red-500 cursor-pointer"
-                  >
-                    <option value="line">Line Chart (Điểm CPD)</option>
-                    <option value="stacked_grade">Stacked Bar Chart (% phân bổ Grade)</option>
-                  </select>
-                </div>
-
-                {topLearnersWithColors.length > 0 && (
-                  <div className="space-y-2 pt-2 border-t border-slate-200/60">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block">Học Viên Lên Biểu Đồ ({topLearnersWithColors.length})</label>
-                    <div className="grid grid-cols-2 gap-1.5 text-[10px] font-semibold text-slate-600">
-                      {topLearnersWithColors.map(l => (
-                        <div key={l.id} className="flex items-center gap-1.5 truncate" title={l.displayName}>
-                          <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ backgroundColor: l.color }} />
-                          <span className="truncate">{l.displayName}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Chart controls moved directly to the header for better contextual control */}
               </div>
 
-              <div className="text-[10px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed space-y-1.5">
-                <span className="font-bold text-slate-700 block">Biểu đồ so sánh đa đường</span>
-                <p>Đường đứt quãng được kết nối tự động nếu học viên bỏ lỡ một round.</p>
-                <div className="pt-1.5 border-t border-slate-100 space-y-1">
-                  <span className="font-bold text-slate-600 block">Tương tác trực quan:</span>
-                  <ul className="list-disc pl-3.5 space-y-0.5 text-slate-400">
-                    <li><strong className="text-slate-600">Click Chú thích (Legend):</strong> Ẩn/Hiện đường của học viên đó trên đồ thị.</li>
-                    <li><strong className="text-slate-600">Click Điểm (Dot):</strong> Lọc nhanh toàn bộ trang báo cáo theo học viên được click.</li>
-                  </ul>
-                </div>
-                <div className="pt-1.5 border-t border-slate-100">
-                  <span className="font-bold text-slate-600 block mb-1">Màu chấm = Grade điểm:</span>
-                  <div className="flex flex-wrap gap-x-2.5 gap-y-1">
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block" /> Purple</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Green</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block" /> Yellow</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" /> Red</span>
+              {topLearnersWithColors.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-slate-200/60">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">Học Viên Lên Biểu Đồ ({topLearnersWithColors.length})</label>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] font-semibold text-slate-600">
+                    {topLearnersWithColors.map(l => (
+                      <div key={l.id} className="flex items-center gap-1.5 truncate" title={l.displayName}>
+                        <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ backgroundColor: l.color }} />
+                        <span className="truncate">{l.displayName}</span>
+                      </div>
+                    ))}
                   </div>
+                </div>
+              )}
+            </div>
+
+            <div className="text-[10px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed space-y-1.5">
+              <span className="font-bold text-slate-700 block">Biểu đồ so sánh đa đường</span>
+              <p>Đường đứt quãng được kết nối tự động nếu học viên bỏ lỡ một round.</p>
+              <div className="pt-1.5 border-t border-slate-100 space-y-1">
+                <span className="font-bold text-slate-600 block">Tương tác trực quan:</span>
+                <ul className="list-disc pl-3.5 space-y-0.5 text-slate-400">
+                  <li><strong className="text-slate-600">Click Chú thích (Legend):</strong> Ẩn/Hiện đường của học viên đó trên đồ thị.</li>
+                  <li><strong className="text-slate-600">Click Điểm (Dot):</strong> Lọc nhanh toàn bộ trang báo cáo theo học viên được click.</li>
+                </ul>
+              </div>
+              <div className="pt-1.5 border-t border-slate-100">
+                <span className="font-bold text-slate-600 block mb-1">Màu chấm = Grade điểm:</span>
+                <div className="flex flex-wrap gap-x-2.5 gap-y-1">
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block" /> Purple</span>
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Green</span>
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block" /> Yellow</span>
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" /> Red</span>
                 </div>
               </div>
             </div>
+          </div>
 
-            <div className="lg:col-span-8 flex flex-col justify-between" style={{ minHeight: '320px' }}>
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
-                  <BarChart2 className="w-4 h-4 text-indigo-600" />
-                  {timelineChartType === 'stacked_grade' ? 'Phân Bổ Tỉ Lệ Điểm Số Học Viên' : 'Đồ Thị Đường CPD Theo Từng Câu Hỏi'}
-                </h4>
-                <div className="flex items-center gap-2">
-                  {timelineChartType === 'stacked_grade' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowBarLabels(!showBarLabels)}
-                      className="p-1 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-lg text-slate-500 hover:text-slate-700 transition-colors cursor-pointer flex items-center justify-center"
-                      title={showBarLabels ? "Ẩn nhãn phần trăm trên cột" : "Hiển thị nhãn phần trăm trên cột"}
-                    >
-                      {showBarLabels ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  )}
-                  <span className="text-[9px] bg-indigo-50 text-indigo-600 font-mono font-bold px-2 py-0.5 rounded uppercase">
-                    {timelineChartType === 'stacked_grade' ? 'Metric: Grade Share %' : `X-Axis: ${learnerSentenceSortBy.toUpperCase()}`}
-                  </span>
-                </div>
+          <div className="lg:col-span-8 flex flex-col justify-between" style={{ minHeight: '320px' }}>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 gap-4 flex-wrap">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
+                <BarChart2 className="w-4 h-4 text-indigo-600" />
+                {timelineChartType === 'stacked_grade' ? 'Phân Bổ Tỉ Lệ Điểm Số Học Viên' : 'Đồ Thị Đường CPD Theo Từng Câu Hỏi'}
+              </h4>
+              <div className="flex items-center gap-2">
+                {timelineChartType === 'stacked_grade' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBarLabels(!showBarLabels)}
+                    className="p-1 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-lg text-slate-500 hover:text-slate-700 transition-colors cursor-pointer flex items-center justify-center shrink-0"
+                    title={showBarLabels ? "Ẩn nhãn phần trăm trên cột" : "Hiển thị nhãn phần trăm trên cột"}
+                  >
+                    {showBarLabels ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+                <select
+                  value={timelineChartType}
+                  onChange={(event) => setTimelineChartType(event.target.value as any)}
+                  className="text-[10px] font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 outline-none focus:border-red-500 cursor-pointer shrink-0"
+                >
+                  <option value="line">Line (CPD)</option>
+                  <option value="stacked_grade">Stacked Bar (Grade %)</option>
+                </select>
+                <select
+                  value={learnerSentenceSortBy}
+                  onChange={(event) => setLearnerSentenceSortBy(event.target.value as any)}
+                  className="text-[10px] font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 outline-none focus:border-red-500 cursor-pointer shrink-0"
+                >
+                  <option value="round">Sắp xếp: Round</option>
+                  <option value="cvr">Sắp xếp: CVR Ω</option>
+                  <option value="cci">Sắp xếp: CCI Std X</option>
+                </select>
               </div>
+            </div>
 
               <div className="flex-1 w-full flex items-center justify-center pt-4">
                 {learnerSentenceChartData.length === 0 ? (
