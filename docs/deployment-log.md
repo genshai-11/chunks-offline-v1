@@ -1210,6 +1210,35 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 11:05 GMT+7 — Normalize X-axis to relative learner progression on Learner Sentence Timeline
+
+**Operator**: tamha with Craft Agent  
+**Commit**: `0fd2968` and subsequent updates  
+**Tag**: `firebase-hosting-20260708-1105-relative-rounds`  
+**Preview URL**: N/A (Production-only release workflow)  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Refactor `learnerSentenceChartData` in `HistoryTab.tsx` when sorted by `round`.
+- Group responses per learner and sort them by sequential order. Plot consecutive responses (R01, R02, R03...) rather than absolute global session rounds.
+- Update custom Recharts Tooltip component to support learner-relative X-axis, displaying student-specific global round index and sentence code on hover.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- UI-only chart telemetry updates. Zero database impacts.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>

@@ -1043,7 +1043,69 @@ export default function HistoryTab({
   }, [filteredHistory]);
 
   const learnerSentenceChartData = useMemo(() => {
-    // 1. Group responses by round / sentence point
+    if (learnerSentenceSortBy === 'round') {
+      // 1. Group responses by learner first and sort by order/time
+      const learnerResponsesMap: Record<string, typeof filteredHistory> = {};
+      topLearnersWithColors.forEach(learner => {
+        learnerResponsesMap[learner.id] = filteredHistory
+          .filter(item => item.learner_id === learner.id)
+          .sort((a, b) => {
+            const indexA = a.round?.round_index || 0;
+            const indexB = b.round?.round_index || 0;
+            if (indexA !== indexB) return indexA - indexB;
+            return new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime();
+          });
+      });
+
+      // 2. Find the max rounds answered by any single top learner
+      let maxRounds = 0;
+      topLearnersWithColors.forEach(learner => {
+        const count = learnerResponsesMap[learner.id]?.length || 0;
+        if (count > maxRounds) maxRounds = count;
+      });
+
+      // 3. Generate sequential data points
+      const relativePoints: any[] = [];
+      for (let i = 0; i < maxRounds; i++) {
+        const order = i + 1;
+        const name = `R${String(order).padStart(2, '0')}`;
+        
+        const dataPoint: any = {
+          order,
+          name,
+          isRelative: true,
+          rawPoint: {
+            responses: {} as Record<string, any>
+          }
+        };
+
+        topLearnersWithColors.forEach(learner => {
+          const list = learnerResponsesMap[learner.id] || [];
+          const item = list[i];
+          if (item) {
+            const cpdVal = Math.round(Number(item.cpd_result || 0) * 10) / 10;
+            dataPoint[learner.id] = cpdVal;
+            dataPoint.rawPoint.responses[learner.id] = {
+              cpd: cpdVal,
+              cvr: Number(item.cvr_value || 0),
+              cci: Number(item.cci_standard_x || 0),
+              performanceY: Number(item.performance_y || 0),
+              grade: item.response_color || 'red',
+              submittedAt: item.submitted_at,
+              roundIndex: item.round?.round_index || 0,
+              sentenceCode: getShortSentenceCode(item.sentence?.sentence_code, item.sentence?.order_index),
+              fullSentenceCode: item.sentence?.sentence_code || ''
+            };
+          }
+        });
+
+        relativePoints.push(dataPoint);
+      }
+
+      return relativePoints.slice(0, 120);
+    }
+
+    // Otherwise, sorting by absolute CVR/CCI standard values
     const pointsMap = new Map<string, {
       roundId: string;
       roundIndex: number;
@@ -1109,22 +1171,15 @@ export default function HistoryTab({
     const sortedPoints = Array.from(pointsMap.values()).sort((a, b) => {
       if (learnerSentenceSortBy === 'cvr') {
         return a.cvrValue - b.cvrValue;
-      } else if (learnerSentenceSortBy === 'cci') {
-        return a.cciStandardX - b.cciStandardX;
       } else {
-        if (a.roundIndex !== b.roundIndex) {
-          return a.roundIndex - b.roundIndex;
-        }
-        return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+        return a.cciStandardX - b.cciStandardX;
       }
     });
 
     return sortedPoints.map((pt, idx) => {
-      const name = learnerSentenceSortBy === 'round'
-        ? `R${pt.roundIndex || idx + 1}`
-        : learnerSentenceSortBy === 'cvr'
-          ? `Ω${formatCompactNumber(pt.cvrValue)}`
-          : `X${formatCompactNumber(pt.cciStandardX)}`;
+      const name = learnerSentenceSortBy === 'cvr'
+        ? `Ω${formatCompactNumber(pt.cvrValue)}`
+        : `X${formatCompactNumber(pt.cciStandardX)}`;
 
       const dataPoint: any = {
         order: idx + 1,
@@ -1731,43 +1786,63 @@ export default function HistoryTab({
                             const activePoint = payload[0]?.payload;
                             if (!activePoint) return null;
 
-                            const { rawPoint, sentenceCode, fullSentenceCode, roundIndex, cvrValue, cciStandardX } = activePoint;
+                            const { rawPoint, sentenceCode, fullSentenceCode, roundIndex, cvrValue, cciStandardX, isRelative, order } = activePoint;
                             return (
                               <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-lg text-[11px] max-w-[260px] space-y-2.5 z-50">
                                 <div className="border-b border-slate-100 pb-1.5">
-                                  <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thông tin câu hỏi</span>
-                                  <div className="font-bold text-slate-800 leading-tight">
-                                    {sentenceCode} {fullSentenceCode && `(${fullSentenceCode})`}
-                                  </div>
-                                  <div className="flex gap-2 text-[9px] text-slate-500 font-mono mt-0.5">
-                                    <span>Round: R{roundIndex}</span>
-                                    <span>CVR: Ω{formatCompactNumber(cvrValue)}</span>
-                                    <span>CCI X: {formatCompactNumber(cciStandardX)}</span>
-                                  </div>
+                                  {isRelative ? (
+                                    <>
+                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thứ tự câu của Học viên</span>
+                                      <div className="font-bold text-slate-800 leading-tight">
+                                        Lượt phản hồi #{order}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Thông tin câu hỏi</span>
+                                      <div className="font-bold text-slate-800 leading-tight">
+                                        {sentenceCode} {fullSentenceCode && `(${fullSentenceCode})`}
+                                      </div>
+                                      <div className="flex gap-2 text-[9px] text-slate-500 font-mono mt-0.5">
+                                        <span>Round: R{roundIndex}</span>
+                                        <span>CVR: Ω{formatCompactNumber(cvrValue)}</span>
+                                        <span>CCI X: {formatCompactNumber(cciStandardX)}</span>
+                                      </div>
+                                    </>
+                                  )}
                                 </div>
 
-                                <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                                <div className="space-y-2 max-h-40 overflow-y-auto">
                                   <span className="text-[8px] font-extrabold text-slate-400 uppercase block">Chi tiết học viên (CPD)</span>
                                   {topLearnersWithColors.map(learner => {
                                     const res = rawPoint.responses[learner.id];
                                     if (!res) return null;
                                     return (
-                                      <div key={learner.id} className="flex items-center justify-between gap-3 py-0.5">
-                                        <div className="flex items-center gap-1 truncate">
-                                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: learner.color }} />
-                                          <span className="font-medium text-slate-700 truncate">{learner.displayName}</span>
+                                      <div key={learner.id} className="border-b border-slate-50 last:border-0 pb-1.5 last:pb-0">
+                                        <div className="flex items-center justify-between gap-3 py-0.5">
+                                          <div className="flex items-center gap-1 truncate">
+                                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: learner.color }} />
+                                            <span className="font-medium text-slate-700 truncate">{learner.displayName}</span>
+                                          </div>
+                                          <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
+                                            <span className="font-bold text-slate-900">{res.cpd}V</span>
+                                            <span className={`px-1 rounded-[3px] text-[8px] font-extrabold uppercase scale-90 ${
+                                              res.grade === 'purple' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
+                                              res.grade === 'green' ? 'bg-green-50 text-green-600 border border-green-100' :
+                                              res.grade === 'yellow' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
+                                              'bg-red-50 text-red-600 border border-red-100'
+                                            }`}>
+                                              {res.grade}
+                                            </span>
+                                          </div>
                                         </div>
-                                        <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
-                                          <span className="font-bold text-slate-900">{res.cpd}V</span>
-                                          <span className={`px-1 rounded-[3px] text-[8px] font-extrabold uppercase scale-90 ${
-                                            res.grade === 'purple' ? 'bg-purple-50 text-purple-600 border border-purple-100' :
-                                            res.grade === 'green' ? 'bg-green-50 text-green-600 border border-green-100' :
-                                            res.grade === 'yellow' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
-                                            'bg-red-50 text-red-600 border border-red-100'
-                                          }`}>
-                                            {res.grade}
-                                          </span>
-                                        </div>
+                                        {isRelative && (
+                                          <div className="flex gap-2 text-[8px] text-slate-400 font-mono mt-0.5 pl-2.5">
+                                            <span>R{res.roundIndex}</span>
+                                            <span>•</span>
+                                            <span className="truncate">{res.sentenceCode}</span>
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })}
