@@ -1181,6 +1181,35 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 10:15 GMT+7 — Separate Live Sessions View and Integrate Quick Charts
+
+**Operator**: tamha with Craft Agent  
+**Commit**: `a8a210e` and subsequent updates  
+**Tag**: `firebase-hosting-20260708-1015-live-session-charts`  
+**Preview URL**: N/A (Production-only release workflow)  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Remove duplicate Live Session Manager from Teacher Console setup view to prevent data redundancy.
+- Implement expandable quick charts within the Live Sessions panel (Grade Distribution % Bar Chart + Top Learner Max CPD Bar Chart).
+- Recheck and pass TypeScript validation cleanly.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- UI-only refactoring. Zero database schema or data ingestion impacts.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>

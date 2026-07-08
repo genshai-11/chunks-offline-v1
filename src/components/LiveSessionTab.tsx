@@ -6,9 +6,10 @@
 import React, { useState, useMemo } from 'react';
 import { PracticeRoom, Learner, RoomRound, LearnerResponse } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip as ReTooltip } from 'recharts';
 import {
   Activity, Trash2, LogIn, RefreshCw, Clock, Users, BookOpen,
-  CheckCircle2, AlertTriangle, Search, ChevronDown, XCircle, BarChart2
+  AlertTriangle, Search, ChevronDown, XCircle, BarChart2, ChevronUp
 } from 'lucide-react';
 
 interface LiveSessionTabProps {
@@ -46,6 +47,7 @@ export default function LiveSessionTab({
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [sortBy, setSortBy] = useState<'updated' | 'created' | 'code'>('updated');
+  const [expandedChartRoomId, setExpandedChartRoomId] = useState<string | null>(null);
 
   const sortedRooms = useMemo(() => {
     let filtered = [...rooms];
@@ -90,6 +92,49 @@ export default function LiveSessionTab({
     });
     return map;
   }, [rooms, rounds, responses]);
+
+  // Quick chart data per room (grade distribution + CPD per learner)
+  const roomChartData = useMemo(() => {
+    const map: Record<string, {
+      gradeBars: { name: string; value: number; color: string }[];
+      learnerCpd: { name: string; cpd: number }[];
+    }> = {};
+    rooms.forEach(room => {
+      const roomRounds = rounds.filter(rd => rd.room_id === room.id);
+      const roundIds = roomRounds.map(rd => rd.id);
+      const roomResponses = responses.filter(res => roundIds.includes(res.round_id));
+      const total = roomResponses.length;
+      const gradeCount = { purple: 0, green: 0, yellow: 0, red: 0 };
+      roomResponses.forEach(res => {
+        const g = (res.response_color || 'red').toLowerCase();
+        if (g === 'purple') gradeCount.purple++;
+        else if (g === 'green') gradeCount.green++;
+        else if (g === 'yellow') gradeCount.yellow++;
+        else gradeCount.red++;
+      });
+      const gradeBars = [
+        { name: 'Purple', value: total > 0 ? Math.round((gradeCount.purple / total) * 100) : 0, color: '#a855f7' },
+        { name: 'Green',  value: total > 0 ? Math.round((gradeCount.green  / total) * 100) : 0, color: '#22c55e' },
+        { name: 'Yellow', value: total > 0 ? Math.round((gradeCount.yellow / total) * 100) : 0, color: '#eab308' },
+        { name: 'Red',    value: total > 0 ? Math.round((gradeCount.red    / total) * 100) : 0, color: '#ef4444' },
+      ].filter(g => g.value > 0);
+
+      // CPD per learner (max cpd)
+      const learnerCpdMap: Record<string, { name: string; cpd: number }> = {};
+      roomResponses.forEach(res => {
+        const learner = learners.find(l => l.id === res.learner_id);
+        const name = learner?.display_name || `L-${res.learner_id.slice(0, 4)}`;
+        const val = Number(res.cpd_result || 0);
+        if (!learnerCpdMap[res.learner_id] || val > learnerCpdMap[res.learner_id].cpd) {
+          learnerCpdMap[res.learner_id] = { name, cpd: Math.round(val * 10) / 10 };
+        }
+      });
+      const learnerCpd = Object.values(learnerCpdMap).sort((a, b) => b.cpd - a.cpd).slice(0, 8);
+
+      map[room.id] = { gradeBars, learnerCpd };
+    });
+    return map;
+  }, [rooms, rounds, responses, learners]);
 
   const activeCount = rooms.filter(r => r.status !== 'finished').length;
   const finishedCount = rooms.filter(r => r.status === 'finished').length;
@@ -265,66 +310,146 @@ export default function LiveSessionTab({
             return (
               <div
                 key={room.id}
-                className={`bg-white border rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center gap-4 ${
-                  isFinished ? 'border-slate-200 opacity-80' : 'border-slate-200'
+                className={`bg-white border rounded-2xl p-4 shadow-xs flex flex-col gap-3 ${
+                  isFinished ? 'border-slate-200 opacity-90' : 'border-slate-200'
                 }`}
               >
-                {/* Status dot + info */}
-                <div className="flex-1 min-w-0 space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-lg">
-                      {room.room_code}
-                    </span>
-                    <span className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-lg border ${meta.bg} ${meta.color}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
-                      {meta.label}
-                    </span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                  {/* Status dot + info */}
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-sm font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-lg">
+                        {room.room_code}
+                      </span>
+                      <span className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-lg border ${meta.bg} ${meta.color}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+                        {meta.label}
+                      </span>
+                    </div>
+
+                    <div className="text-sm font-bold text-slate-800 truncate">{room.title}</div>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500">
+                      <span className="flex items-center gap-1"><Users className="w-3 h-3" />{stats.learnerCount} learners</span>
+                      <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{stats.roundCount} rounds</span>
+                      <span className="flex items-center gap-1"><BarChart2 className="w-3 h-3" />{stats.responseCount} responses</span>
+                      {room.host_name && <span className="text-slate-400">Host: {room.host_name}</span>}
+                    </div>
+
+                    <div className="flex gap-3 text-[9px] text-slate-400 font-mono">
+                      <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" />Updated {updatedAt.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                      <span>Created {createdAt.toLocaleDateString('vi-VN')}</span>
+                    </div>
                   </div>
 
-                  <div className="text-sm font-bold text-slate-800 truncate">{room.title}</div>
-
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500">
-                    <span className="flex items-center gap-1"><Users className="w-3 h-3" />{stats.learnerCount} learners</span>
-                    <span className="flex items-center gap-1"><BookOpen className="w-3 h-3" />{stats.roundCount} rounds</span>
-                    <span className="flex items-center gap-1"><BarChart2 className="w-3 h-3" />{stats.responseCount} responses</span>
-                    {room.host_name && <span className="text-slate-400">Host: {room.host_name}</span>}
-                  </div>
-
-                  <div className="flex gap-3 text-[9px] text-slate-400 font-mono">
-                    <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" />Updated {updatedAt.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</span>
-                    <span>Created {createdAt.toLocaleDateString('vi-VN')}</span>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-2 shrink-0">
-                  {/* Rejoin → Teacher Console */}
-                  {!isFinished && (
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                    {/* Quick chart toggle button */}
                     <button
                       type="button"
-                      onClick={() => onRejoinRoom(room.id)}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black transition-colors cursor-pointer shadow-xs"
+                      onClick={() => setExpandedChartRoomId(expandedChartRoomId === room.id ? null : room.id)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-black transition-all cursor-pointer ${
+                        expandedChartRoomId === room.id
+                          ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs'
+                          : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                      }`}
+                      title="Xem biểu đồ nhanh"
                     >
-                      <LogIn className="w-3.5 h-3.5" />
-                      Rejoin
+                      <BarChart2 className="w-3.5 h-3.5" />
+                      Biểu đồ
+                      {expandedChartRoomId === room.id ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                     </button>
-                  )}
 
-                  {/* Delete */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeleteConfirmId(room.id);
-                      setDeleteTypedCode('');
-                      setDeleteError('');
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[11px] font-black transition-colors cursor-pointer"
-                    title="Delete this session permanently"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete
-                  </button>
+                    {/* Rejoin → Teacher Console */}
+                    {!isFinished && (
+                      <button
+                        type="button"
+                        onClick={() => onRejoinRoom(room.id)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black transition-colors cursor-pointer shadow-xs"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        Rejoin
+                      </button>
+                    )}
+
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteConfirmId(room.id);
+                        setDeleteTypedCode('');
+                        setDeleteError('');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[11px] font-black transition-colors cursor-pointer"
+                      title="Delete this session permanently"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  </div>
                 </div>
+
+                {/* Expandable Chart Section */}
+                {expandedChartRoomId === room.id && (() => {
+                  const chart = roomChartData[room.id];
+                  const hasData = chart && (chart.gradeBars.length > 0 || chart.learnerCpd.length > 0);
+                  
+                  return (
+                    <div className="mt-2 pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-150">
+                      {/* Grade Share Distribution */}
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" /> Tỉ Lệ Điểm Số (Grade Share %)
+                        </div>
+                        {!hasData || chart.gradeBars.length === 0 ? (
+                          <div className="text-[11px] text-slate-400 italic py-6 text-center">Phòng chưa có phản hồi nào.</div>
+                        ) : (
+                          <div className="h-28">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={chart.gradeBars} margin={{ top: 10, right: 10, left: -30, bottom: 0 }}>
+                                <XAxis dataKey="name" tick={{ fontSize: 8 }} stroke="#94a3b8" />
+                                <YAxis tick={{ fontSize: 8 }} stroke="#94a3b8" unit="%" />
+                                <ReTooltip
+                                  contentStyle={{ fontSize: 10, borderRadius: 8 }}
+                                  formatter={(value: any) => [`${value}%`, 'Tỉ lệ']}
+                                />
+                                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                                  {chart.gradeBars.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                  ))}
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* CPD Leaderboard */}
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                        <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Top Học Viên - Max CPD (V)
+                        </div>
+                        {!hasData || chart.learnerCpd.length === 0 ? (
+                          <div className="text-[11px] text-slate-400 italic py-6 text-center">Phòng chưa có phản hồi nào.</div>
+                        ) : (
+                          <div className="h-28">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={chart.learnerCpd} layout="vertical" margin={{ top: 5, right: 15, left: -20, bottom: 0 }}>
+                                <XAxis type="number" tick={{ fontSize: 8 }} stroke="#94a3b8" />
+                                <YAxis type="category" dataKey="name" tick={{ fontSize: 8 }} stroke="#94a3b8" width={60} />
+                                <ReTooltip
+                                  contentStyle={{ fontSize: 10, borderRadius: 8 }}
+                                  formatter={(value: any) => [`${value}V`, 'Max CPD']}
+                                />
+                                <Bar dataKey="cpd" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

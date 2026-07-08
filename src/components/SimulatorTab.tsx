@@ -1539,79 +1539,19 @@ export default function SimulatorTab({
         {/* 1. ROOM CREATION / SETUP SCREEN */}
         {!activeRoom ? (
           <div className="p-6 flex-1 flex flex-col justify-between gap-5">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-black text-slate-900">Live Session Manager</h2>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Rejoin active teacher consoles, review recent history, or keep learner pads turned off when no teacher is controlling the room.
-                  </p>
-                </div>
-                <a href="/live-session" className="text-[10px] font-bold text-red-600 hover:text-red-700 uppercase tracking-wider">
-                  /live-session
-                </a>
-              </div>
+        {/* Link to dedicated Live Sessions page */}
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+            <span className="text-indigo-700 font-medium">Xem và quản lý tất cả phiên học, rejoin hoặc xóa tại <strong>Live Sessions</strong>.</span>
+            <a
+              href="/live-session"
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition-colors"
+              onClick={e => { e.preventDefault(); window.history.pushState({}, '', '/live-session'); window.dispatchEvent(new PopStateEvent('popstate')); }}
+            >
+              → Live Sessions
+            </a>
+          </div>
 
-              {activeRoomsForManager.length === 0 && recentFinishedRoomsForManager.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-white p-4 text-center text-xs text-slate-400">
-                  No live classroom sessions yet. Launch a room below to begin.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Active / resumable</div>
-                    {activeRoomsForManager.length === 0 ? (
-                      <div className="rounded-xl bg-white border border-slate-200 p-3 text-xs text-slate-400">No resumable sessions.</div>
-                    ) : activeRoomsForManager.slice(0, 6).map(room => (
-                      <div key={room.id} className="rounded-xl bg-white border border-slate-200 p-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{room.room_code}</span>
-                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${room.status === 'round_open' ? 'bg-red-50 text-red-700' : room.status === 'round_closed' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>{room.status}</span>
-                          </div>
-                          <div className="text-xs font-bold text-slate-800 truncate mt-1">{room.title}</div>
-                          <div className="text-[10px] text-slate-400">Updated {new Date(room.updated_at || room.created_at).toLocaleString()}</div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setActiveRoomId(room.id)}
-                          className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black transition-colors"
-                        >
-                          Rejoin
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Recent finished history</div>
-                    {recentFinishedRoomsForManager.length === 0 ? (
-                      <div className="rounded-xl bg-white border border-slate-200 p-3 text-xs text-slate-400">Finished sessions will appear here.</div>
-                    ) : recentFinishedRoomsForManager.map(room => (
-                      <div key={room.id} className="rounded-xl bg-white border border-slate-200 p-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-[10px] font-black text-slate-600 bg-slate-100 px-2 py-0.5 rounded">{room.room_code}</span>
-                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600">finished</span>
-                          </div>
-                          <div className="text-xs font-bold text-slate-800 truncate mt-1">{room.title}</div>
-                          <div className="text-[10px] text-slate-400">Updated {new Date(room.updated_at || room.created_at).toLocaleString()}</div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setActiveRoomId(room.id)}
-                          className="shrink-0 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-[10px] font-black transition-colors"
-                        >
-                          Review
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <form onSubmit={handleCreateRoomSubmit} className="space-y-4">
+          <form onSubmit={handleCreateRoomSubmit} className="space-y-4">
               <div className="border-b border-slate-100 pb-3">
                 <h2 className="text-sm font-semibold text-slate-800">Launch Live Classroom Room</h2>
                 <p className="text-xs text-slate-500 mt-1 leading-normal">
