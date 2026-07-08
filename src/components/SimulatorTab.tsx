@@ -294,6 +294,16 @@ export default function SimulatorTab({
       || null;
   };
 
+  // Listen for rejoin-room events fired from LiveSessionTab
+  useEffect(() => {
+    const handleRejoin = (e: Event) => {
+      const { roomId } = (e as CustomEvent<{ roomId: string }>).detail;
+      if (roomId) setActiveRoomId(roomId);
+    };
+    window.addEventListener('chunks_rejoin_room', handleRejoin);
+    return () => window.removeEventListener('chunks_rejoin_room', handleRejoin);
+  }, []);
+
   // Load active room and subscribe to Supabase Realtime WebSocket changes.
   useEffect(() => {
     syncActiveRoomState();

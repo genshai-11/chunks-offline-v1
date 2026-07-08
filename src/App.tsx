@@ -16,6 +16,7 @@ import {
 import MigrationsTab from './components/MigrationsTab';
 import LibraryTab from './components/LibraryTab';
 import SimulatorTab from './components/SimulatorTab';
+import LiveSessionTab from './components/LiveSessionTab';
 import LearnerTerminalTab from './components/LearnerTerminalTab';
 import HistoryTab from './components/HistoryTab';
 import AudioGeneratorTab from './components/AudioGeneratorTab';
@@ -96,11 +97,11 @@ const navItems = [
     label: 'Live Sessions',
     shortLabel: 'Live',
     icon: Activity,
-    description: 'Rejoin and manage active classrooms',
+    description: 'Manage, review and delete all classroom sessions',
     options: [
-      { label: 'Rejoin Session', desc: 'Resume active teacher consoles' },
-      { label: 'Close Learners', desc: 'Turn off response pads safely' },
-      { label: 'Session History', desc: 'Review recent room state' }
+      { label: 'All Rooms', desc: 'Browse every session by status' },
+      { label: 'Rejoin Session', desc: 'Return to Teacher Console for an active room' },
+      { label: 'Delete Session', desc: 'Permanently remove finished sessions and data' }
     ]
   },
   {
@@ -524,7 +525,7 @@ export default function App() {
               />
             )}
 
-            {(activeTab === 'simulator' || activeTab === 'liveSession') && (
+            {(activeTab === 'simulator') && (
               <SimulatorTab
                 useSandbox={useSandbox}
                 courses={courses}
@@ -536,6 +537,24 @@ export default function App() {
                 rooms={rooms}
                 learners={learners}
                 onRefreshData={reloadDatabaseState}
+              />
+            )}
+
+            {activeTab === 'liveSession' && (
+              <LiveSessionTab
+                rooms={rooms}
+                rounds={rounds}
+                responses={responses}
+                learners={learners}
+                onRefreshData={reloadDatabaseState}
+                onRejoinRoom={(roomId) => {
+                  // Navigate to Teacher Console and fire an event so SimulatorTab can pick up the room
+                  navigateToTab('simulator');
+                  // Small delay so SimulatorTab mounts before receiving the event
+                  setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('chunks_rejoin_room', { detail: { roomId } }));
+                  }, 80);
+                }}
               />
             )}
 
