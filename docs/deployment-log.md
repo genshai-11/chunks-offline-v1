@@ -1327,6 +1327,37 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 16:35 GMT+7 — Integrate chart filter dropdowns directly into headers
+
+**Operator**: tamha with Craft Agent  
+**Commit**: `a9f9dda`  
+**Tag**: `firebase-hosting-20260708-1635-integrate-selectors`  
+**Preview URL**: <https://chunks-offline--preview-local-mpqkh436.web.app>  
+**Production URL/version**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Move `roomChartMetric` dropdown selector from the left sidebar panel directly into the Room Overview Chart header next to the title.
+- Move `timelineChartType` and `learnerSentenceSortBy` dropdown selectors from the left sidebar panel directly into the Learner Sentence Timeline Chart header.
+- Clean up the sidebars of both chart widgets to keep the interface focused and reduce layout clutter.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+- [x] Preview/canary checked (deployed and loaded successfully at preview URL)
+- [x] Production checked (deployed and live at production URL)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous release version.
+
+### Notes / risks
+
+- Front-end layout optimization only. Zero risk to database state or core session rules.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
