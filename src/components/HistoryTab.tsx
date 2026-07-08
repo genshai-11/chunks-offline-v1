@@ -1679,9 +1679,18 @@ export default function HistoryTab({
                 )}
               </div>
 
-              <div className="text-[10px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed">
-                <span className="font-bold text-slate-700 block mb-0.5">Biểu đồ so sánh đa đường</span>
-                Đường đứt quãng được kết nối tự động (`connectNulls`) nếu học viên bỏ lỡ lượt trả lời ở một số round.
+              <div className="text-[10px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed space-y-1.5">
+                <span className="font-bold text-slate-700 block">Biểu đồ so sánh đa đường</span>
+                <p>Đường đứt quãng được kết nối tự động nếu học viên bỏ lỡ một round.</p>
+                <div className="pt-1 border-t border-slate-100">
+                  <span className="font-bold text-slate-600 block mb-1">Màu chấm = Grade điểm:</span>
+                  <div className="flex flex-wrap gap-x-2.5 gap-y-1">
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block" /> Purple</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Green</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block" /> Yellow</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" /> Red</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1782,8 +1791,28 @@ export default function HistoryTab({
                             name={learner.displayName}
                             stroke={learner.color}
                             strokeWidth={2}
-                            dot={{ r: 3, strokeWidth: 1 }}
-                            activeDot={{ r: 5 }}
+                            dot={(dotProps: any) => {
+                              const { cx, cy, payload } = dotProps;
+                              const res = payload?.rawPoint?.responses?.[learner.id];
+                              if (!res || payload[learner.id] == null) return <g key={`dot-${learner.id}-${cx}`} />;
+                              const gradeHex =
+                                res.grade === 'purple' ? '#a855f7' :
+                                res.grade === 'green'  ? '#22c55e' :
+                                res.grade === 'yellow' ? '#eab308' :
+                                '#ef4444';
+                              return (
+                                <circle
+                                  key={`dot-${learner.id}-${cx}`}
+                                  cx={cx}
+                                  cy={cy}
+                                  r={4}
+                                  fill={gradeHex}
+                                  stroke="#fff"
+                                  strokeWidth={1.5}
+                                />
+                              );
+                            }}
+                            activeDot={{ r: 6 }}
                             connectNulls={true}
                           />
                         ))}
