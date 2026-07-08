@@ -1358,6 +1358,74 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 18:11 GMT+7 — Library topic prep schema and lesson-generator proxy deploy
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `a3ea1bc`  
+**Supabase project**: `ftfxekdxeoxizoyxuqoz`  
+**Edge Function**: `lesson-generator-proxy` version 1  
+**Function id**: `054456a7-95b2-4163-99e4-f13df7767b22`  
+**Production URL**: <https://chunks-offline.web.app>
+
+### Scope
+
+- Add nullable `lesson_sections.default_cci_standard_card_id` for section/topic default CCI assignment.
+- Add index `lesson_sections_default_cci_standard_card_id_idx`.
+- Deploy Supabase Edge Function `lesson-generator-proxy` with JWT verification enabled.
+- Proxy uses confirmed Cloud Run base `https://chunks-generator-gu5ft5gagq-uw.a.run.app` and endpoint `/api/generate-sentence`.
+- No Firebase Hosting deploy was performed in this entry.
+
+### Release-control checklist
+
+- [x] Implementation committed before production-impacting Supabase changes.
+- [x] Commit pushed to `origin/main` before migration/function deploy.
+- [x] Non-destructive migration only: nullable column + index/comment.
+- [x] Function restore path identified: redeploy previous function bundle/version or temporarily disable Library generation UI while keeping CRUD available.
+- [x] Post-deploy smoke verification completed.
+
+### Supabase migration evidence
+
+Migration recorded:
+
+- `20260708102143` — `lesson_section_default_cci`
+
+Verification query result:
+
+- `lesson_sections.default_cci_standard_card_id`: `uuid`, nullable `YES`
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Confirmed external health route: `GET /api/ping` returned HTTP 200 JSON status ok.
+- [x] Confirmed external generate route: `POST /api/generate-sentence` returned HTTP 200 with generated EN/VI candidate and `totalOhm`.
+- [x] Deployed Edge Function `lesson-generator-proxy` with `verify_jwt: true`.
+- [x] Supabase Function smoke test returned HTTP 200, `status: success`, candidate present, `totalOhm: 5`.
+
+### Rollback
+
+Schema rollback, if needed and after confirming no section defaults are required:
+
+```sql
+drop index if exists public.lesson_sections_default_cci_standard_card_id_idx;
+alter table public.lesson_sections drop column if exists default_cci_standard_card_id;
+```
+
+Function rollback options:
+
+1. Redeploy the previous known-good function bundle/version if one exists.
+2. If generation must be disabled immediately, hide/disable the Library Generate Candidate UI and redeploy Hosting, while leaving Library CRUD and Topic Prep usable.
+3. Re-deploy this commit's function bundle to restore the proxy after any accidental change.
+
+### Notes / risks
+
+- The M2M endpoint currently works without `X-API-Key`; the proxy still supports optional server-side `CHUNKS_M2M_API_KEY` if configured later.
+- The provided M2M key was not committed or printed in deployment evidence.
+- Web app production bundle was not deployed in this entry; users will need a later Hosting release to see frontend UI changes in production.
+- Full browser quickstart validation remains open.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>

@@ -145,7 +145,7 @@
 - [x] T051 [US5] Update `docs/wiki-skeleton/Architecture.md` with Library hierarchy/topic prep and Edge Function proxy responsibilities after implementation
 - [x] T052 [US5] Update `docs/wiki-skeleton/Product-PRD-and-Scope.md` with topic prep and section CCI assignment scope after implementation
 - [x] T053 [US5] Update `docs/devops-runbook.md` if Edge Function deployment steps or secret configuration differ from current runbook
-- [ ] T054 [US5] Add implementation/release evidence to `docs/deployment-log.md` only after an actual deploy or migration occurs
+- [x] T054 [US5] Add implementation/release evidence to `docs/deployment-log.md` only after an actual deploy or migration occurs
 
 **Checkpoint**: Canonical docs and handbook summaries reflect the implemented behavior.
 
@@ -162,7 +162,7 @@
 - [x] T059 Verify no normal Library product flow depends on `sandboxDb` by searching `src/components/LibraryTab.tsx` and `src/lib/supabaseClient.ts`
 - [ ] T060 Run full quickstart scenarios in `specs/005-library-topic-prep-cci/quickstart.md`
 - [x] T061 Review git diff and ensure unrelated local work is not included
-- [ ] T062 Commit implementation changes with Craft Agent co-author trailer if Craft Agent commits
+- [x] T062 Commit implementation changes with Craft Agent co-author trailer if Craft Agent commits
 - [ ] T063 If deploying web app changes, follow preview/canary → tag-gated production → production verification → `docs/deployment-log.md`
 
 ---
