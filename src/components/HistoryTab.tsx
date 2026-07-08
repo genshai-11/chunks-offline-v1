@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Course, Lesson, SentenceResource, PracticeRoom, RoomRound, Learner, LearnerResponse, LearnerProgress } from '../types';
 import { getShortSentenceCode } from '../lib/resourceCode';
 import DataExplorerTab from './DataExplorerTab';
@@ -58,7 +58,12 @@ export default function HistoryTab({
 
   // --- FILTERS STATE ---
   const [selectedRoomId, setSelectedRoomId] = useState<string>('all');
-  const [selectedLearnerId, setSelectedLearnerId] = useState<string>('all');
+  const [selectedLearnerIds, setSelectedLearnerIds] = useState<string[]>([]);
+  const selectedLearnerId = selectedLearnerIds.length === 1 ? selectedLearnerIds[0] : 'all';
+  const [isLearnerDropdownOpen, setIsLearnerDropdownOpen] = useState(false);
+  const [learnerSearchQuery, setLearnerSearchQuery] = useState('');
+  const [isLearnerDropdownOpen2, setIsLearnerDropdownOpen2] = useState(false);
+  const [learnerSearchQuery2, setLearnerSearchQuery2] = useState('');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<'all' | 'red' | 'yellow' | 'green' | 'purple'>('all');
   const gradeFilterOptions = [
     { value: 'all', label: 'All grades' },
@@ -227,6 +232,59 @@ export default function HistoryTab({
     };
   }, [selectedRoomId, rooms, rounds, responses, allLearners]);
 
+  // Filter available learners based on selected session
+  const filteredLearnerOptions = useMemo(() => {
+    if (selectedRoomId === 'all') {
+      return allLearners;
+    }
+    const roomRounds = rounds.filter(rd => rd.room_id === selectedRoomId);
+    const roomRoundIds = roomRounds.map(rd => rd.id);
+    const roomResponses = responses.filter(res => roomRoundIds.includes(res.round_id));
+    const participatingLearnerIds = new Set(roomResponses.map(res => res.learner_id));
+    return allLearners.filter(l => participatingLearnerIds.has(l.id));
+  }, [selectedRoomId, allLearners, rounds, responses]);
+
+  // Compute stats per learner for active session
+  const learnerSessionStats = useMemo(() => {
+    const roomAndDateFilteredResponses = responses.filter(res => {
+      const round = rounds.find(rd => rd.id === res.round_id);
+      if (selectedRoomId !== 'all') {
+        if (!round || round.room_id !== selectedRoomId) return false;
+      }
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        const itemDate = new Date(res.submitted_at);
+        if (itemDate < start) return false;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        const itemDate = new Date(res.submitted_at);
+        if (itemDate > end) return false;
+      }
+      return true;
+    });
+
+    const stats: Record<string, { count: number; sumCpd: number }> = {};
+    roomAndDateFilteredResponses.forEach(r => {
+      if (!stats[r.learner_id]) {
+        stats[r.learner_id] = { count: 0, sumCpd: 0 };
+      }
+      stats[r.learner_id].count += 1;
+      stats[r.learner_id].sumCpd += r.cpd_result || 0;
+    });
+    return stats;
+  }, [responses, rounds, selectedRoomId, startDate, endDate]);
+
+  // Clear or filter selectedLearnerIds when selectedRoomId changes to avoid cross-room learner selection drift
+  useEffect(() => {
+    if (selectedRoomId !== 'all') {
+      const participatingLearnerIds = new Set(filteredLearnerOptions.map(l => l.id));
+      setSelectedLearnerIds(prev => prev.filter(id => participatingLearnerIds.has(id)));
+    }
+  }, [selectedRoomId, filteredLearnerOptions]);
+
   // Map and filter full responses list
   const filteredHistory = useMemo(() => {
     return responses.map(res => {
@@ -250,8 +308,8 @@ export default function HistoryTab({
         }
       }
       // Learner filter
-      if (selectedLearnerId !== 'all') {
-        if (item.learner_id !== selectedLearnerId) {
+      if (selectedLearnerIds.length > 0) {
+        if (!selectedLearnerIds.includes(item.learner_id)) {
           return false;
         }
       }
@@ -276,7 +334,7 @@ export default function HistoryTab({
       return true;
     })
     .sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
-  }, [responses, rounds, allLearners, resources, rooms, selectedRoomId, selectedLearnerId, selectedGradeFilter, startDate, endDate]);
+  }, [responses, rounds, allLearners, resources, rooms, selectedRoomId, selectedLearnerIds, selectedGradeFilter, startDate, endDate]);
 
   // Aggregated values are intentionally evaluated from the active filter scope.
   // Examples: RFC = red_count / total_responses; RAC = one - rfc.
@@ -1324,7 +1382,7 @@ export default function HistoryTab({
                   value={selectedRoomId}
                   onChange={(e) => {
                     setSelectedRoomId(e.target.value);
-                    setSelectedLearnerId('all');
+                    setSelectedLearnerIds([]);
                   }}
                   className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
                 >
@@ -1337,20 +1395,96 @@ export default function HistoryTab({
                 </select>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 relative">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                  <Users className="w-3 h-3 text-red-600" /> Learner
+                  <Users className="w-3 h-3 text-red-600" /> Learner (Multi-select)
                 </label>
-                <select
-                  value={selectedLearnerId}
-                  onChange={(e) => setSelectedLearnerId(e.target.value)}
-                  className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer"
-                >
-                  <option value="all">All learners</option>
-                  {allLearners.map(l => (
-                    <option key={l.id} value={l.id}>{l.display_name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsLearnerDropdownOpen(!isLearnerDropdownOpen)}
+                    className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 outline-hidden flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors"
+                  >
+                    <span className="truncate">
+                      {selectedLearnerIds.length === 0
+                        ? `All Learners (${filteredLearnerOptions.length})`
+                        : selectedLearnerIds.length === 1
+                          ? filteredLearnerOptions.find(l => l.id === selectedLearnerIds[0])?.display_name || '1 Learner Selected'
+                          : `${selectedLearnerIds.length} Learners Selected`}
+                    </span>
+                    <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                  </button>
+
+                  {isLearnerDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsLearnerDropdownOpen(false)} />
+                      <div className="absolute left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 p-2.5 w-64 max-h-72 flex flex-col space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Search learner..."
+                          value={learnerSearchQuery}
+                          onChange={(e) => setLearnerSearchQuery(e.target.value)}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 outline-hidden focus:border-red-500"
+                        />
+                        <div className="flex justify-between items-center px-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLearnerIds(filteredLearnerOptions.map(l => l.id))}
+                            className="text-[10px] font-bold text-red-500 hover:text-red-600 cursor-pointer"
+                          >
+                            Select All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLearnerIds([])}
+                            className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            Clear All
+                          </button>
+                        </div>
+                        <div className="overflow-y-auto flex-1 space-y-1 pr-1 max-h-40">
+                          {filteredLearnerOptions
+                            .filter(l => l.display_name.toLowerCase().includes(learnerSearchQuery.toLowerCase()))
+                            .map(l => {
+                              const stats = learnerSessionStats[l.id];
+                              const isChecked = selectedLearnerIds.includes(l.id);
+                              return (
+                                <label
+                                  key={l.id}
+                                  className="flex items-center gap-2 p-1.5 hover:bg-slate-50 rounded-lg cursor-pointer text-xs select-none w-full"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      if (isChecked) {
+                                        setSelectedLearnerIds(selectedLearnerIds.filter(id => id !== l.id));
+                                      } else {
+                                        setSelectedLearnerIds([...selectedLearnerIds, l.id]);
+                                      }
+                                    }}
+                                    className="rounded border-slate-300 text-red-600 focus:ring-red-500 cursor-pointer w-3.5 h-3.5"
+                                  />
+                                  <div className="flex-1 flex justify-between items-center min-w-0">
+                                    <span className="font-semibold text-slate-700 truncate">{l.display_name}</span>
+                                    {stats ? (
+                                      <span className="text-[9px] font-mono text-slate-400 shrink-0 ml-2">
+                                        {stats.count} rounds | {Math.round((stats.sumCpd / stats.count) * 10) / 10}V
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] font-mono text-slate-300 shrink-0 ml-2">
+                                        no replies
+                                      </span>
+                                    )}
+                                  </div>
+                                </label>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1373,10 +1507,10 @@ export default function HistoryTab({
                   type="button"
                   onClick={() => {
                     setSelectedRoomId('all');
-                    setSelectedLearnerId('all');
+                    setSelectedLearnerIds([]);
                     setSelectedGradeFilter('all');
                   }}
-                  disabled={selectedRoomId === 'all' && selectedLearnerId === 'all' && selectedGradeFilter === 'all'}
+                  disabled={selectedRoomId === 'all' && selectedLearnerIds.length === 0 && selectedGradeFilter === 'all'}
                   className="w-full flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 px-4 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:bg-slate-50 disabled:text-slate-300 text-slate-600 rounded-xl border border-slate-200 transition-colors cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Reset filters
@@ -2381,14 +2515,20 @@ export default function HistoryTab({
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
                     {selectedRoomDetails.participatingLearners.map(l => {
-                      const isActive = selectedLearnerId === l.id;
+                      const isActive = selectedLearnerIds.includes(l.id);
                       const personalRoomResponses = filteredHistory.filter(item => item.learner_id === l.id);
                       const studentRoomCpd = personalRoomResponses.length > 0 ? Math.max(...personalRoomResponses.map(curr => curr.cpd_result || 0)) : 0;
 
                       return (
                         <button
                           key={l.id}
-                          onClick={() => setSelectedLearnerId(isActive ? 'all' : l.id)}
+                          onClick={() => {
+                            if (isActive) {
+                              setSelectedLearnerIds(selectedLearnerIds.filter(id => id !== l.id));
+                            } else {
+                              setSelectedLearnerIds([...selectedLearnerIds, l.id]);
+                            }
+                          }}
                           className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                             isActive
                               ? 'bg-red-500 border-red-400 text-white shadow-xs'
@@ -2885,6 +3025,98 @@ export default function HistoryTab({
 
       </div>
 
+      {/* MULTI-LEARNER COMPARISON REPORT (Visible when 2+ students are selected) */}
+      {selectedLearnerIds.length > 1 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <span className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+              <Users className="w-5 h-5" />
+            </span>
+            <div>
+              <h3 className="font-bold text-slate-800 text-sm">So Sánh Chi Tiết Học Viên ({selectedLearnerIds.length} học viên)</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">Bảng so sánh hiệu suất học tập của các học viên đã chọn trong khoảng thời gian đã lọc.</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase font-bold text-slate-400">
+                  <th className="py-2.5 px-3">Học viên</th>
+                  <th className="py-2.5 px-3 text-center">Số lượt trả lời</th>
+                  <th className="py-2.5 px-3 text-center">CPD Lớn nhất</th>
+                  <th className="py-2.5 px-3 text-center">🟣 Purple %</th>
+                  <th className="py-2.5 px-3 text-center">🟢 Green %</th>
+                  <th className="py-2.5 px-3 text-center">🟡 Yellow %</th>
+                  <th className="py-2.5 px-3 text-center">🔴 Red %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {selectedLearnerIds.map(learnerId => {
+                  const student = allLearners.find(l => l.id === learnerId);
+                  if (!student) return null;
+
+                  const studentResponses = responses.filter(res => {
+                    const round = rounds.find(rd => rd.id === res.round_id);
+                    if (selectedRoomId !== 'all') {
+                      if (!round || round.room_id !== selectedRoomId) return false;
+                    }
+                    if (startDate) {
+                      const start = new Date(startDate);
+                      start.setHours(0, 0, 0, 0);
+                      const itemDate = new Date(res.submitted_at);
+                      if (itemDate < start) return false;
+                    }
+                    if (endDate) {
+                      const end = new Date(endDate);
+                      end.setHours(23, 59, 59, 999);
+                      const itemDate = new Date(res.submitted_at);
+                      if (itemDate > end) return false;
+                    }
+                    return res.learner_id === learnerId;
+                  });
+
+                  const count = studentResponses.length;
+                  const maxCpd = count > 0 ? Math.max(...studentResponses.map(r => r.cpd_result || 0)) : 0;
+                  const purples = studentResponses.filter(r => r.response_color === 'purple').length;
+                  const greens = studentResponses.filter(r => r.response_color === 'green').length;
+                  const yellows = studentResponses.filter(r => r.response_color === 'yellow').length;
+                  const reds = studentResponses.filter(r => r.response_color === 'red').length;
+
+                  const pPurple = count > 0 ? Math.round((purples / count) * 100) : 0;
+                  const pGreen = count > 0 ? Math.round((greens / count) * 100) : 0;
+                  const pYellow = count > 0 ? Math.round((yellows / count) * 100) : 0;
+                  const pRed = count > 0 ? Math.round((reds / count) * 100) : 0;
+
+                  return (
+                    <tr key={learnerId} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-2.5 px-3 font-semibold text-slate-700 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full font-bold" style={{ backgroundColor: topLearnersWithColors.find(tl => tl.id === learnerId)?.color || '#94a3b8' }} />
+                        {student.display_name}
+                      </td>
+                      <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-600">{count}</td>
+                      <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">{Math.round(maxCpd * 10) / 10}V</td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className="font-mono font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">{pPurple}%</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className="font-mono font-semibold text-green-700 bg-green-50 px-1.5 py-0.5 rounded">{pGreen}%</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className="font-mono font-semibold text-yellow-700 bg-yellow-50 px-1.5 py-0.5 rounded">{pYellow}%</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className="font-mono font-semibold text-red-700 bg-red-50 px-1.5 py-0.5 rounded">{pRed}%</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* INDIVIDUAL LEARNER REPORT DETAILS (Visible only when student filter is active) */}
       {selectedLearnerId !== 'all' && (
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 animate-in fade-in duration-200">
@@ -3084,22 +3316,96 @@ export default function HistoryTab({
           <div className="flex flex-wrap items-center gap-4">
             
             {/* Inline Learner Filter Dropdown */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 relative">
               <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
                 <Users className="w-4 h-4 text-red-500" /> Learner Profile:
               </span>
-              <select
-                value={selectedLearnerId}
-                onChange={(e) => setSelectedLearnerId(e.target.value)}
-                className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 cursor-pointer shadow-3xs min-w-[160px]"
-              >
-                <option value="all">All Learners (Roster)</option>
-                {allLearners.map(l => (
-                  <option key={l.id} value={l.id}>
-                    {l.display_name}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsLearnerDropdownOpen2(!isLearnerDropdownOpen2)}
+                  className="text-xs font-semibold bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 outline-hidden flex justify-between items-center cursor-pointer shadow-3xs min-w-[180px] hover:bg-slate-50 transition-colors"
+                >
+                  <span className="truncate">
+                    {selectedLearnerIds.length === 0
+                      ? `All Learners (${filteredLearnerOptions.length})`
+                      : selectedLearnerIds.length === 1
+                        ? filteredLearnerOptions.find(l => l.id === selectedLearnerIds[0])?.display_name || '1 Selected'
+                        : `${selectedLearnerIds.length} Selected`}
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1.5" />
+                </button>
+
+                {isLearnerDropdownOpen2 && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setIsLearnerDropdownOpen2(false)} />
+                    <div className="absolute left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 p-2.5 w-64 max-h-72 flex flex-col space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Search learner..."
+                        value={learnerSearchQuery2}
+                        onChange={(e) => setLearnerSearchQuery2(e.target.value)}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 outline-hidden focus:border-red-500"
+                      />
+                      <div className="flex justify-between items-center px-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedLearnerIds(filteredLearnerOptions.map(l => l.id))}
+                          className="text-[10px] font-bold text-red-500 hover:text-red-600 cursor-pointer"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedLearnerIds([])}
+                          className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                      <div className="overflow-y-auto flex-1 space-y-1 pr-1 max-h-40">
+                        {filteredLearnerOptions
+                          .filter(l => l.display_name.toLowerCase().includes(learnerSearchQuery2.toLowerCase()))
+                          .map(l => {
+                            const stats = learnerSessionStats[l.id];
+                            const isChecked = selectedLearnerIds.includes(l.id);
+                            return (
+                              <label
+                                key={l.id}
+                                className="flex items-center gap-2 p-1.5 hover:bg-slate-50 rounded-lg cursor-pointer text-xs select-none w-full"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isChecked) {
+                                      setSelectedLearnerIds(selectedLearnerIds.filter(id => id !== l.id));
+                                    } else {
+                                      setSelectedLearnerIds([...selectedLearnerIds, l.id]);
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 text-red-600 focus:ring-red-500 cursor-pointer w-3.5 h-3.5"
+                                />
+                                <div className="flex-1 flex justify-between items-center min-w-0">
+                                  <span className="font-semibold text-slate-700 truncate">{l.display_name}</span>
+                                  {stats ? (
+                                    <span className="text-[9px] font-mono text-slate-400 shrink-0 ml-2">
+                                      {stats.count} rounds | {Math.round((stats.sumCpd / stats.count) * 10) / 10}V
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-mono text-slate-300 shrink-0 ml-2">
+                                      no replies
+                                    </span>
+                                  )}
+                                </div>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Dynamic Column Visibility Toggler */}

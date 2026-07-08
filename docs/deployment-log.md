@@ -1151,6 +1151,34 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 - Zero database schema impact. UI-only enhancement to the Reports & History tab.
 
+## 2026-07-08 08:04 GMT+7 — Add smart multi-select learner filtering and comparison report table
+
+**Operator**: tamha with Craft Agent  
+**Commit**: [Pending user commit]  
+**Tag**: [Pending user tag, recommended: `firebase-hosting-20260708-0804-multi-learner-filter`]  
+**Preview URL**: [Pending deploy]  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Replace simple learner dropdown with custom multi-select checklist overlay dropdown.
+- Constrain learner selection list to participants of the selected room session to avoid cross-room noise.
+- Compute and display live response counts and average CPD statistics within checkbox selection options.
+- Add a new "So Sánh Chi Tiết Học Viên" table card below the chart when 2+ learners are selected for comparison.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- Zero database schema impact. UI-only enhancement to the Reports & History tab.
+
 ---
 
 ## Template for future entries
