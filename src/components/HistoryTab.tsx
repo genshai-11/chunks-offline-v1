@@ -65,6 +65,7 @@ export default function HistoryTab({
   const [isLearnerDropdownOpen2, setIsLearnerDropdownOpen2] = useState(false);
   const [learnerSearchQuery2, setLearnerSearchQuery2] = useState('');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<'all' | 'red' | 'yellow' | 'green' | 'purple'>('all');
+  const [hiddenLearnerIds, setHiddenLearnerIds] = useState<string[]>([]);
   const gradeFilterOptions = [
     { value: 'all', label: 'All grades' },
     { value: 'red', label: 'Red' },
@@ -1737,7 +1738,14 @@ export default function HistoryTab({
               <div className="text-[10px] text-slate-500 bg-white border border-slate-200/50 p-2.5 rounded-lg leading-relaxed space-y-1.5">
                 <span className="font-bold text-slate-700 block">Biểu đồ so sánh đa đường</span>
                 <p>Đường đứt quãng được kết nối tự động nếu học viên bỏ lỡ một round.</p>
-                <div className="pt-1 border-t border-slate-100">
+                <div className="pt-1.5 border-t border-slate-100 space-y-1">
+                  <span className="font-bold text-slate-600 block">Tương tác trực quan:</span>
+                  <ul className="list-disc pl-3.5 space-y-0.5 text-slate-400">
+                    <li><strong className="text-slate-600">Click Chú thích (Legend):</strong> Ẩn/Hiện đường của học viên đó trên đồ thị.</li>
+                    <li><strong className="text-slate-600">Click Điểm (Dot):</strong> Lọc nhanh toàn bộ trang báo cáo theo học viên được click.</li>
+                  </ul>
+                </div>
+                <div className="pt-1.5 border-t border-slate-100">
                   <span className="font-bold text-slate-600 block mb-1">Màu chấm = Grade điểm:</span>
                   <div className="flex flex-wrap gap-x-2.5 gap-y-1">
                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block" /> Purple</span>
@@ -1856,11 +1864,22 @@ export default function HistoryTab({
                           height={36} 
                           iconType="circle" 
                           iconSize={8}
-                          wrapperStyle={{ fontSize: '9px', paddingTop: '10px' }}
+                          wrapperStyle={{ fontSize: '9px', paddingTop: '10px', cursor: 'pointer' }}
+                          onClick={(data) => {
+                            const learnerId = data.dataKey;
+                            if (learnerId) {
+                              setHiddenLearnerIds(prev =>
+                                prev.includes(learnerId)
+                                  ? prev.filter(id => id !== learnerId)
+                                  : [...prev, learnerId]
+                              );
+                            }
+                          }}
                         />
                         {topLearnersWithColors.map((learner) => (
                           <Line
                             key={learner.id}
+                            hide={hiddenLearnerIds.includes(learner.id)}
                             type="monotone"
                             dataKey={learner.id}
                             name={learner.displayName}
@@ -1880,14 +1899,21 @@ export default function HistoryTab({
                                   key={`dot-${learner.id}-${cx}`}
                                   cx={cx}
                                   cy={cy}
-                                  r={4}
+                                  r={5}
                                   fill={gradeHex}
                                   stroke="#fff"
                                   strokeWidth={1.5}
+                                  className="cursor-pointer hover:r-6 hover:stroke-width-2 transition-all"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    // Set global learner filter to focus on this student
+                                    setSelectedLearnerIds([learner.id]);
+                                  }}
+                                  style={{ cursor: 'pointer' }}
                                 />
                               );
                             }}
-                            activeDot={{ r: 6 }}
+                            activeDot={{ r: 7 }}
                             connectNulls={true}
                           />
                         ))}

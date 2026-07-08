@@ -1239,6 +1239,35 @@ Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → R
 
 ---
 
+## 2026-07-08 11:10 GMT+7 — Add interactive legend toggles and dot-click filtering to Learner Sentence Timeline
+
+**Operator**: tamha with Craft Agent  
+**Commit**: `e55873c` and subsequent updates  
+**Tag**: `firebase-hosting-20260708-1110-interactive-chart`  
+**Preview URL**: N/A (Production-only release workflow)  
+**Production URL**: <https://chunks-offline.web.app>  
+
+### Scope
+
+- Enable Legend click handler to toggle line visibility on the chart locally (`hiddenLearnerIds` local state).
+- Enable Dot click handler to filter/focus the entire tab content on that specific student (`setSelectedLearnerIds`).
+- Add helper hints in the sidebar to guide instructors on how to use interactive legend toggles and dot filters.
+
+### Validation
+
+- [x] `npm run lint` (passed cleanly)
+- [x] `npm run build` (passed cleanly)
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to previous known-good release.
+
+### Notes / risks
+
+- UI-only interactivity updates. Zero database or scoring impacts.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
