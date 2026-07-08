@@ -1125,9 +1125,9 @@ npx firebase-tools deploy --only hosting --project chunks-offline
 ## 2026-07-08 07:33 GMT+7 — Add Learner Sentence Timeline line chart component
 
 **Operator**: tamha with Craft Agent  
-**Commit**: [Pending user commit]  
-**Tag**: [Pending user tag, recommended: `firebase-hosting-20260708-0733-learner-sentence-timeline`]  
-**Preview URL**: [Pending deploy]  
+**Commit**: `53c3620`  
+**Tag**: `firebase-hosting-20260708-0752-learner-sentence-timeline`  
+**Preview URL**: N/A (Production-only release workflow)  
 **Production URL**: <https://chunks-offline.web.app>  
 
 ### Scope
