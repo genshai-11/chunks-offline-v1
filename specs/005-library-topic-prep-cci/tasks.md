@@ -163,7 +163,7 @@
 - [ ] T060 Run full quickstart scenarios in `specs/005-library-topic-prep-cci/quickstart.md`
 - [x] T061 Review git diff and ensure unrelated local work is not included
 - [x] T062 Commit implementation changes with Craft Agent co-author trailer if Craft Agent commits
-- [ ] T063 If deploying web app changes, follow preview/canary → tag-gated production → production verification → `docs/deployment-log.md`
+- [x] T063 If deploying web app changes, follow preview/canary → tag-gated production → production verification → `docs/deployment-log.md`
 
 ---
 

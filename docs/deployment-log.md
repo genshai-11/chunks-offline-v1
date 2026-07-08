@@ -1426,6 +1426,62 @@ Function rollback options:
 
 ---
 
+## 2026-07-08 18:21 GMT+7 — Library topic prep and section CCI Hosting release
+
+**Operator**: Lucy with Craft Agent  
+**Commit**: `b94d9eb`  
+**Tag**: `firebase-hosting-20260708-1819-library-topic-prep`  
+**Preview URL**: <https://chunks-offline--preview-local-mpqkh436.web.app>  
+**Production URL/version**: <https://chunks-offline.web.app> served `assets/index-CdXcTjU9.js`  
+**Production workflow**: <https://github.com/genshai-11/chunks-offline-v1/actions/runs/28938722668>
+
+### Scope
+
+- Deploy frontend Library topic prep UI, course/lesson/section hierarchy CRUD, section default CCI selector, and lesson-generator candidate review flow.
+- Deploy Teacher Console section CCI resolution UI and round snapshot behavior.
+- Frontend release follows the Supabase migration/function deploy from the previous log entry.
+
+### Release-control checklist
+
+- [x] Commit before deploy.
+- [x] Supabase migration/function deployed and verified before Hosting production release.
+- [x] Firebase preview/canary deployed before production tag.
+- [x] Tag-gated production deployment used.
+- [x] Production post-deploy verification completed.
+
+### Validation
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] Firebase preview deployed: <https://chunks-offline--preview-local-mpqkh436.web.app>
+- [x] Preview routes returned HTTP 200: `/`, `/library`, `/teacher`, `/live-session`, `/settings`, `/reports`
+- [x] Production served new asset: `assets/index-CdXcTjU9.js`
+- [x] Production routes returned HTTP 200: `/`, `/library`, `/teacher`, `/live-session`, `/settings`, `/reports`, `/learner`
+- [x] GitHub production workflow completed successfully.
+
+### Rollback
+
+Preferred rollback: Firebase Console → Hosting → site `chunks-offline` → Release history → roll back to the previous release.
+
+Git rollback example:
+
+```bash
+git fetch --tags
+git checkout <previous-known-good-tag>
+npm ci
+npm run build
+npx firebase-tools deploy --only hosting --project chunks-offline
+```
+
+If the frontend must be rolled back while keeping the Supabase migration/function, use Hosting rollback only. If section CCI storage must also be reverted, use the schema rollback SQL from the previous log entry after confirming no section default assignments are needed.
+
+### Notes / risks
+
+- Full guided browser quickstart scenarios remain to be completed for CRUD/save/live-room CCI walkthroughs.
+- Local lint script maps to `tsc --noEmit` and passed via production workflow.
+
+---
+
 ## Template for future entries
 
 ## YYYY-MM-DD HH:mm GMT+7 — <release/update title>
